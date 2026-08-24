@@ -5,7 +5,7 @@ package main
 const indexHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>grpc-lab</title>
 <style>
-:root{--bg:#0f1115;--panel:#161a21;--line:#252b36;--fg:#d7dce5;--dim:#8b95a7;--acc:#5eead4;--err:#f87171;--ok:#4ade80}
+:root{--bg:#0f1115;--panel:#161a21;--line:#252b36;--fg:#d7dce5;--dim:#8b95a7;--acc:#5eead4;--err:#f87171;--ok:#4ade80;--warn:#fbbf24}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
 header{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
@@ -15,126 +15,274 @@ input:focus,textarea:focus{outline:1px solid var(--acc)}
 button{cursor:pointer;background:#1d2530}
 button:hover{border-color:var(--acc)}
 button.primary{background:var(--acc);color:#062723;border-color:var(--acc);font-weight:600}
-main{display:grid;grid-template-columns:280px 1fr 1fr;height:calc(100vh - 53px)}
+button.small{padding:2px 7px;font-size:11px}
+label.chk{color:var(--dim);font-size:11px;display:flex;gap:4px;align-items:center;white-space:nowrap}
+main{display:grid;grid-template-columns:300px 1fr 1fr;height:calc(100vh - 53px)}
 section{overflow:auto;padding:10px 12px;border-right:1px solid var(--line)}
 section:last-child{border-right:0}
-h3{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
+h3{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);display:flex;gap:8px;align-items:center}
 .svc{color:var(--dim);margin-top:10px;font-size:11px;word-break:break-all}
-.m{padding:4px 8px;border-radius:5px;cursor:pointer;word-break:break-all}
+.m{padding:4px 8px;border-radius:5px;cursor:pointer;word-break:break-all;display:flex;gap:6px;align-items:center}
 .m:hover{background:#1b212b}
 .m.sel{background:#1d3b38;color:var(--acc)}
-textarea{width:100%;height:calc(100vh - 260px);resize:vertical;white-space:pre;overflow:auto}
+.badge{font-size:9px;padding:0 5px;border-radius:4px;border:1px solid var(--line);color:var(--warn);flex:none}
+textarea{width:100%;resize:vertical;white-space:pre;overflow:auto;tab-size:2}
+#body{height:calc(100vh - 330px);min-height:160px}
+textarea.aux{height:64px;font-size:12px}
 pre{white-space:pre-wrap;word-break:break-word;background:#0c0e12;border:1px solid var(--line);border-radius:6px;padding:10px;margin:0;max-height:calc(100vh - 150px);overflow:auto}
 .row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
 .grow{flex:1;min-width:120px}
-.pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+.pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim);word-break:break-all}
 .pill.ok{color:var(--ok);border-color:#1e4634}.pill.err{color:var(--err);border-color:#4a2020}
-.saved{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim)}
+.saved{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);display:flex;justify-content:space-between;gap:6px}
 .saved:hover{background:#1b212b;color:var(--fg)}
+.saved .x{color:var(--dim);opacity:.5}.saved .x:hover{color:var(--err);opacity:1}
+.hist{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hist:hover{background:#1b212b;color:var(--fg)}
+.hist.ok::before{content:"● ";color:var(--ok)}.hist.err::before{content:"● ";color:var(--err)}
+.tabs{display:flex;gap:2px}.tabs button{border-radius:6px 6px 0 0;border-bottom:0}.tabs button.on{background:#0c0e12;color:var(--acc)}
+.anyrow{display:flex;gap:6px;align-items:center;margin:4px 0;font-size:12px}
+.anyrow .p{color:var(--warn);flex:none}
+details{margin-bottom:8px}summary{cursor:pointer;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.k{color:#93c5fd}.s{color:#86efac}.n{color:#fbbf24}.b{color:#f0abfc}
+kbd{font-size:10px;color:var(--dim)}
+.types{color:var(--dim);font-size:11px}
 </style></head><body>
 <header>
   <b>grpc-lab</b>
   <input id="addr" value="{{ADDR}}" title="target host:port" style="width:190px">
+  <label class="chk"><input type="checkbox" id="tls">TLS (insecure)</label>
   <input id="token" placeholder="bearer token (optional)" class="grow">
-  <button onclick="loadMethods()">Reload</button>
+  <button onclick="loadMethods(true)">Reload</button>
   <span id="hint" class="pill">reflection</span>
 </header>
 <main>
   <section>
-    <h3>Methods</h3><div id="methods">loading…</div>
+    <input id="filter" placeholder="filter methods…" style="width:100%" oninput="renderMethods()">
+    <div id="methods" style="margin-top:6px">loading…</div>
     <h3>Saved payloads</h3><div id="saved"></div>
+    <h3>History <button class="small" onclick="clearHistory()">clear</button></h3><div id="history"></div>
   </section>
   <section>
     <div class="row">
       <span id="sel" class="pill">no method selected</span>
-      <button onclick="loadTemplate()">Template</button>
+    </div>
+    <div class="row">
+      <button onclick="loadTemplate(true)" title="regenerate request skeleton from reflection">Template</button>
       <button onclick="format()">Format</button>
+      <button onclick="scanAny()" title="find google.protobuf.Any fields and fill them with a concrete type">Any…</button>
       <button onclick="save()">Save…</button>
-      <button class="primary" onclick="invoke()">Invoke</button>
+      <button class="primary" onclick="invoke()">Invoke <kbd>⌃⏎</kbd></button>
+      <label class="chk"><input type="checkbox" id="emit">emit defaults</label>
+      <label class="chk"><input type="checkbox" id="verbose">verbose</label>
     </div>
     <textarea id="body" spellcheck="false" placeholder="{}"></textarea>
+    <div id="anybox"></div>
+    <details><summary>Metadata headers</summary>
+      <textarea id="headers" class="aux" spellcheck="false" placeholder="x-tenant-id: 1&#10;x-request-id: abc"></textarea></details>
+    <details><summary>Variables ({{name}} in body)</summary>
+      <textarea id="vars" class="aux" spellcheck="false" placeholder="customerId=30000&#10;sellerId=20"></textarea></details>
   </section>
   <section>
-    <div class="row"><h3 style="margin:0">Response</h3><span id="status" class="pill">idle</span></div>
+    <div class="row">
+      <div class="tabs"><button class="on" data-t="out" onclick="tab('out')">Response</button><button data-t="desc" onclick="tab('desc')">Describe</button><button data-t="cmd" onclick="tab('cmd')">grpcurl</button></div>
+      <span id="status" class="pill">idle</span>
+      <button class="small" onclick="copy($('out').textContent)">copy</button>
+    </div>
     <pre id="out">—</pre>
+    <pre id="desc" style="display:none">—</pre>
+    <pre id="cmd" style="display:none">—</pre>
   </section>
 </main>
+<datalist id="typelist"></datalist>
 <script>
-let method = "";
+let method = "", services = [], meta = {}, types = [];
 const $ = id => document.getElementById(id);
 const addr = () => $("addr").value.trim();
+const conn = () => "addr=" + encodeURIComponent(addr()) + "&tls=" + ($("tls").checked ? 1 : 0);
+const api = async (url, opt) => (await fetch(url, opt)).json();
 
-async function loadMethods(){
-  $("methods").textContent = "loading…";
-  const r = await (await fetch("/api/methods?addr=" + encodeURIComponent(addr()))).json();
+// ---- persistence: small conveniences survive a reload ----
+const ls = { get: k => { try { return localStorage.getItem("grpclab:" + k) || ""; } catch(e){ return ""; } },
+             set: (k, v) => { try { localStorage.setItem("grpclab:" + k, v); } catch(e){} } };
+["addr","token","headers","vars"].forEach(k => { if (ls.get(k)) $(k).value = ls.get(k); $(k).oninput = () => ls.set(k, $(k).value); });
+$("tls").checked = ls.get("tls") === "1"; $("tls").onchange = () => { ls.set("tls", $("tls").checked ? "1" : "0"); loadMethods(true); };
+$("body").oninput = () => { if (method) ls.set("body:" + method, $("body").value); };
+
+async function loadMethods(refresh){
+  $("methods").textContent = "loading…"; types = [];
+  const r = await api("/api/methods?" + conn());
   if (r.error){ $("methods").innerHTML = '<span style="color:var(--err)">' + esc(r.error) + '</span>'; return; }
-  $("methods").innerHTML = (r.services||[]).map(s =>
-    '<div class="svc">' + esc(s.name) + '</div>' +
-    (s.methods||[]).map(m => '<div class="m" data-m="' + esc(m) + '">' + esc(m.split(".").pop()) + '</div>').join("")
-  ).join("");
-  document.querySelectorAll(".m").forEach(el => el.onclick = () => pick(el));
+  services = r.services || [];
+  renderMethods();
+  loadTypes(refresh);
 }
 
-function pick(el){
-  document.querySelectorAll(".m").forEach(x => x.classList.remove("sel"));
-  el.classList.add("sel");
-  method = el.dataset.m;
-  $("sel").textContent = method;
-  loadTemplate();
+function renderMethods(){
+  const q = $("filter").value.trim().toLowerCase();
+  $("methods").innerHTML = services.map(s => {
+    const ms = s.methods.filter(m => !q || m.name.toLowerCase().includes(q));
+    if (!ms.length) return "";
+    return '<div class="svc">' + esc(s.name) + '</div>' + ms.map(m =>
+      '<div class="m' + (m.name === method ? " sel" : "") + '" data-m="' + esc(m.name) + '">' + esc(m.name.split(".").pop()) +
+      (m.clientStream && m.serverStream ? '<span class="badge">bidi</span>' : m.clientStream ? '<span class="badge">client stream</span>' : m.serverStream ? '<span class="badge">server stream</span>' : '') +
+      '</div>').join("");
+  }).join("") || '<span style="color:var(--dim)">no match</span>';
+  document.querySelectorAll(".m").forEach(el => el.onclick = () => pick(el.dataset.m));
 }
 
-async function loadTemplate(){
+// Type index for the Any picker: every message the server knows about.
+async function loadTypes(refresh){
+  const r = await api("/api/types?" + conn() + (refresh ? "&refresh=1" : ""));
+  types = r.types || [];
+  $("typelist").innerHTML = types.map(t => '<option value="' + esc(t) + '">').join("");
+  $("hint").textContent = "reflection · " + types.length + " types";
+}
+
+async function pick(name){
+  method = name;
+  meta = services.flatMap(s => s.methods).find(m => m.name === name) || {};
+  renderMethods();
+  $("sel").innerHTML = esc(name) + ' <span style="color:var(--dim)">' + esc(meta.input) + ' → ' + esc(meta.output) + '</span>';
+  const saved = ls.get("body:" + name);
+  await loadTemplate(!saved);
+  if (saved) $("body").value = saved;
+}
+
+async function loadTemplate(replace){
   if(!method) return;
-  const r = await (await fetch("/api/template?addr=" + encodeURIComponent(addr()) + "&method=" + encodeURIComponent(method))).json();
-  if(!$("body").value.trim() || confirmReplace()) $("body").value = r.template || "{}";
+  const r = await api("/api/template?" + conn() + "&method=" + encodeURIComponent(method));
+  if (r.error){ setStatus(r.error, false); return; }
+  $("desc").textContent = r.describe || "";
+  if (replace || !$("body").value.trim() || confirm("Replace the current request body with the template?")){
+    let t = r.template || "{}";
+    if (r.clientStream) t += "\n" + t; // stdin takes many messages: show two so the shape is obvious
+    $("body").value = t; ls.set("body:" + method, t); $("anybox").innerHTML = "";
+  }
 }
-// Only clobber a non-empty editor when the developer says so -- losing a
-// hand-built cart tree to a stray click is worse than an extra prompt.
-function confirmReplace(){ return confirm("Replace the current request body with the template?"); }
 
 function format(){
-  try { $("body").value = JSON.stringify(JSON.parse($("body").value), null, 2); }
+  const txt = $("body").value;
+  try { $("body").value = parseMany(txt).map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value); }
   catch(e){ setStatus("invalid JSON: " + e.message, false); }
 }
-
-async function invoke(){
-  if(!method){ setStatus("pick a method first", false); return; }
-  setStatus("calling…", null);
-  $("out").textContent = "";
-  const r = await (await fetch("/api/invoke", {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({addr: addr(), method, payload: $("body").value, token: $("token").value.trim()})
-  })).json();
-  $("out").textContent = r.output || r.error || "(no output)";
-  setStatus((r.ok ? "ok" : "error") + " · " + (r.ms||0) + "ms", r.ok);
+// Client-streaming bodies are several JSON objects back to back; parse them all.
+function parseMany(txt){
+  const out = []; let s = txt.trim();
+  while (s){
+    let depth = 0, inStr = false, i = 0;
+    for (; i < s.length; i++){
+      const c = s[i];
+      if (inStr){ if (c === "\\") i++; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true; else if (c === "{" || c === "[") depth++; else if (c === "}" || c === "]") { depth--; if (!depth){ i++; break; } }
+    }
+    out.push(JSON.parse(s.slice(0, i))); s = s.slice(i).trim();
+  }
+  return out;
 }
 
+// ---- google.protobuf.Any ----
+// grpcurl's template renders every Any as {"@type": ".../google.protobuf.Empty", "value": {}}.
+// Find each one, let the developer pick the concrete type, and splice in that
+// type's template. The server's reflection resolves the type at invoke time.
+function scanAny(){
+  let objs; try { objs = parseMany($("body").value); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+  const found = [];
+  const walk = (v, path) => {
+    if (Array.isArray(v)) v.forEach((x, i) => walk(x, path + "[" + i + "]"));
+    else if (v && typeof v === "object"){
+      if ("@type" in v) found.push({ path, type: String(v["@type"]).replace("type.googleapis.com/", "") });
+      Object.keys(v).forEach(k => k !== "@type" && walk(v[k], path ? path + "." + k : k));
+    }
+  };
+  objs.forEach((o, i) => walk(o, objs.length > 1 ? "#" + i : ""));
+  if (!found.length){ $("anybox").innerHTML = '<div class="types">no google.protobuf.Any fields in body</div>'; return; }
+  $("anybox").innerHTML = found.map((f, i) =>
+    '<div class="anyrow"><span class="p">' + esc(f.path || "$") + '</span>' +
+    '<input list="typelist" class="grow" id="any' + i + '" value="' + esc(f.type) + '" placeholder="pkg.Message">' +
+    '<button class="small" onclick="fillAny(' + i + ',' + JSON.stringify(f.path) + ')">fill</button></div>').join("");
+}
+async function fillAny(i, path){
+  const t = $("any" + i).value.trim(); if (!t) return;
+  const r = await api("/api/describe?" + conn() + "&symbol=" + encodeURIComponent(t));
+  if (r.error){ setStatus(r.error, false); return; }
+  let tpl = {}; try { tpl = JSON.parse(r.template || "{}"); } catch(e){}
+  const objs = parseMany($("body").value);
+  let idx = 0, p = path;
+  const m = /^#(\d+)\.?/.exec(p); if (m){ idx = +m[1]; p = p.slice(m[0].length); }
+  setPath(objs[idx], p, Object.assign({ "@type": "type.googleapis.com/" + t }, tpl));
+  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value);
+  setStatus("filled " + (path || "$") + " with " + t, true); scanAny();
+}
+function setPath(root, path, val){
+  const keys = path ? path.replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean) : [];
+  if (!keys.length){ Object.keys(root).forEach(k => delete root[k]); Object.assign(root, val); return; }
+  let o = root; keys.slice(0, -1).forEach(k => o = o[k]); o[keys[keys.length - 1]] = val;
+}
+
+// ---- invoke ----
+function substitute(txt){
+  const vars = {};
+  $("vars").value.split("\n").forEach(l => { const i = l.indexOf("="); if (i > 0) vars[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });
+  return txt.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (m, k) => k in vars ? vars[k] : m);
+}
+async function invoke(){
+  if(!method){ setStatus("pick a method first", false); return; }
+  const payload = substitute($("body").value);
+  try { parseMany(payload); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+  setStatus("calling…", null); $("out").textContent = ""; tab("out");
+  const r = await api("/api/invoke", { method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ addr: addr(), method, payload, token: $("token").value.trim(), headers: $("headers").value,
+      tls: $("tls").checked, emitDefaults: $("emit").checked, verbose: $("verbose").checked }) });
+  $("out").innerHTML = hl(r.output || r.error || "(no output)");
+  $("cmd").textContent = r.command || "";
+  setStatus((r.ok ? "ok" : "error" + codeName(r.output)) + " · " + (r.ms||0) + "ms", r.ok);
+  loadHistory();
+}
+const CODES = ["OK","CANCELLED","UNKNOWN","INVALID_ARGUMENT","DEADLINE_EXCEEDED","NOT_FOUND","ALREADY_EXISTS","PERMISSION_DENIED","RESOURCE_EXHAUSTED","FAILED_PRECONDITION","ABORTED","OUT_OF_RANGE","UNIMPLEMENTED","INTERNAL","UNAVAILABLE","DATA_LOSS","UNAUTHENTICATED"];
+function codeName(out){ const m = /"code":\s*(\d+)/.exec(out || ""); return m && CODES[+m[1]] ? " " + CODES[+m[1]] : ""; }
+
+// ---- saved payloads & history ----
 async function save(){
-  const name = prompt("save as (letters, digits, . _ -):");
+  const name = prompt("save as (letters, digits, . _ -):", method ? method.split(".").pop() : "");
   if(!name) return;
-  const r = await (await fetch("/api/payloads", {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({name, body: $("body").value})
-  })).json();
+  const r = await api("/api/payloads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({name, body: $("body").value}) });
   if(r.error){ setStatus(r.error, false); return; }
   setStatus("saved " + r.saved, true); loadSaved();
 }
-
 async function loadSaved(){
-  const r = await (await fetch("/api/payloads")).json();
-  $("saved").innerHTML = (r.payloads||[]).map(p =>
-    '<div class="saved" data-b="' + esc(p.body) + '">' + esc(p.name) + '</div>').join("") || '<span style="color:var(--dim)">none</span>';
-  document.querySelectorAll(".saved").forEach(el => el.onclick = () => {
-    $("body").value = el.dataset.b;
-    try { format(); } catch(e){}
+  const r = await api("/api/payloads");
+  $("saved").innerHTML = (r.payloads||[]).map((p, i) =>
+    '<div class="saved" data-i="' + i + '"><span>' + esc(p.name) + '</span><span class="x" title="delete">×</span></div>').join("") || '<span style="color:var(--dim)">none</span>';
+  document.querySelectorAll(".saved").forEach(el => {
+    const p = r.payloads[+el.dataset.i];
+    el.onclick = () => { $("body").value = p.body; format(); };
+    el.querySelector(".x").onclick = async e => { e.stopPropagation(); if(!confirm("delete " + p.name + "?")) return;
+      await fetch("/api/payloads?name=" + encodeURIComponent(p.name), { method: "DELETE" }); loadSaved(); };
   });
 }
-
-function setStatus(t, ok){
-  const s = $("status"); s.textContent = t;
-  s.className = "pill" + (ok === true ? " ok" : ok === false ? " err" : "");
+async function loadHistory(){
+  const r = await api("/api/history");
+  $("history").innerHTML = (r.history||[]).map((h, i) =>
+    '<div class="hist ' + (h.ok ? "ok" : "err") + '" data-i="' + i + '" title="' + esc(h.at) + '">' + esc(h.at.slice(11,19)) + ' ' + esc(h.method.split(".").slice(-2).join(".")) + ' ' + h.ms + 'ms</div>').join("") || '<span style="color:var(--dim)">none</span>';
+  document.querySelectorAll(".hist").forEach(el => el.onclick = async () => {
+    const h = r.history[+el.dataset.i];
+    if (h.addr !== addr()){ $("addr").value = h.addr; ls.set("addr", h.addr); await loadMethods(); }
+    if (!services.flatMap(s => s.methods).some(m => m.name === h.method)){ setStatus("method not on this target: " + h.method, false); return; }
+    await pick(h.method); $("body").value = h.payload; format();
+  });
 }
-function esc(s){ return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+async function clearHistory(){ await fetch("/api/history", { method: "DELETE" }); loadHistory(); }
 
-loadMethods(); loadSaved();
+// ---- misc ----
+function tab(t){ ["out","desc","cmd"].forEach(x => { $(x).style.display = x === t ? "" : "none"; }); document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.t === t)); }
+function copy(t){ navigator.clipboard.writeText(t).then(() => setStatus("copied", true)); }
+function setStatus(t, ok){ const s = $("status"); s.textContent = t; s.className = "pill" + (ok === true ? " ok" : ok === false ? " err" : ""); }
+function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+// Cheap JSON colouring on the escaped text; grpcurl already pretty-prints.
+function hl(s){ return esc(s).replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b/g,
+  (m, str, colon, kw) => str ? (colon ? '<span class="k">' + str + '</span>' + colon : '<span class="s">' + str + '</span>') : kw ? '<span class="b">' + kw + '</span>' : '<span class="n">' + m + '</span>'); }
+document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); invoke(); } });
+
+loadMethods(); loadSaved(); loadHistory();
 </script></body></html>`

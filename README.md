@@ -32,11 +32,25 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 
 - Lists services and methods from **server reflection** — no `.proto` files, no
   descriptor sets, and it cannot drift from what the server actually serves.
-- Generates a request skeleton per method (`grpcurl -msg-template`).
-- Saves request bodies to `payloads/` and reloads them in one click.
-- Sends a bearer token as `authorization` metadata for authenticated RPCs.
-- Shows the raw `grpcurl` output, including status code, message and details on
-  failure — the error text is the point, so it is never swallowed.
+  Each method shows its request/response types and a `client stream` /
+  `server stream` / `bidi` badge.
+- Generates a request skeleton from the method's **real input type** (resolved
+  through `describe`, not guessed from the method name).
+- **`google.protobuf.Any` resolver** — `Any…` finds every `@type` in the body,
+  offers every message type the server knows (walked via reflection) and
+  splices in that type's template with the right `@type` URL.
+- Streaming: server-stream responses print in order; client/bidi streams take
+  several JSON objects one after another in the editor.
+- `Describe` tab shows the proto text of the method, request and response.
+- `grpcurl` tab gives the exact pasteable command for the last call.
+- Metadata headers (`k: v` lines), bearer token, TLS (`-insecure`),
+  `-emit-defaults`, `-v` verbose mode, `{{var}}` substitution from a
+  variables box, `⌃⏎` to invoke.
+- Saves request bodies to `payloads/` (delete with ×), keeps a call history
+  (`payloads/.history.jsonl`, last 100) that reloads a request in one click,
+  and remembers addr/token/headers/body per method in `localStorage`.
+- Errors come back as `-format-error` JSON with the gRPC code name in the
+  status pill; nothing is swallowed.
 
 ## Flags
 
@@ -49,8 +63,7 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 
 ## Limits
 
-- Unary calls only. Streaming methods will not work.
-- `-plaintext` only; no TLS targets yet.
+- `-insecure` TLS only (no CA/client certs yet).
 - Requires reflection enabled on the target (go-commons registers it by default).
 - Binds to `127.0.0.1` and shells out to `grpcurl` — a local dev tool, not
   something to expose on a network.

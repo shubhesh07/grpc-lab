@@ -28,6 +28,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -43,6 +44,15 @@ var (
 // rather than sanitised -- an obvious rule beats a clever one.
 var safeName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
+// rpcLine matches one line of `grpcurl describe <service>`:
+//
+//	rpc Name ( stream .pkg.In ) returns ( stream .pkg.Out );
+var rpcLine = regexp.MustCompile(`rpc\s+(\w+)\s*\(\s*(stream\s+)?\.?([\w.]+)\s*\)\s*returns\s*\(\s*(stream\s+)?\.?([\w.]+)\s*\)`)
+
+// typeRef matches a fully-qualified message/enum reference inside describe
+// output, e.g. `.shared.common.v1.Seller seller = 1;` or `map<string, .a.B>`.
+var typeRef = regexp.MustCompile(`\.([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)+)`)
+
 func main() {
 	flag.Parse()
 	if _, err := exec.LookPath("grpcurl"); err != nil {
@@ -55,8 +65,11 @@ func main() {
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/api/methods", handleMethods)
 	http.HandleFunc("/api/template", handleTemplate)
+	http.HandleFunc("/api/describe", handleDescribe)
+	http.HandleFunc("/api/types", handleTypes)
 	http.HandleFunc("/api/invoke", handleInvoke)
 	http.HandleFunc("/api/payloads", handlePayloads)
+	http.HandleFunc("/api/history", handleHistory)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", *uiPort)
 	log.Printf("grpc-lab  http://%s   target=%s   payloads=%s", addr, *defaultAddr, *payloadDir)
@@ -88,13 +101,54 @@ func addrOf(r *http.Request) string {
 	return *defaultAddr
 }
 
-// handleMethods lists every fully-qualified method on the target, grouped by
-// service, so the UI never needs a .proto file or a descriptor set.
+// connArgs picks the transport flags. plaintext is the dev default; tls=1
+// uses TLS without verifying the certificate, which is what a local port
+// forward to a cluster ingress needs.
+func connArgs(tls bool) []string {
+	if tls {
+		return []string{"-insecure"}
+	}
+	return []string{"-plaintext"}
+}
+
+func tlsOf(r *http.Request) bool { return r.URL.Query().Get("tls") == "1" }
+
+type method struct {
+	Name         string `json:"name"` // fully qualified: pkg.Service.Method
+	Input        string `json:"input"`
+	Output       string `json:"output"`
+	ClientStream bool   `json:"clientStream"`
+	ServerStream bool   `json:"serverStream"`
+}
+
+// parseMethods turns `grpcurl describe <service>` output into methods.
+func parseMethods(service, describe string) []method {
+	var ms []method
+	for _, m := range rpcLine.FindAllStringSubmatch(describe, -1) {
+		ms = append(ms, method{
+			Name:         service + "." + m[1],
+			Input:        m[3],
+			Output:       m[5],
+			ClientStream: m[2] != "",
+			ServerStream: m[4] != "",
+		})
+	}
+	sort.Slice(ms, func(i, j int) bool { return ms[i].Name < ms[j].Name })
+	return ms
+}
+
+func isNoise(service string) bool {
+	return strings.HasPrefix(service, "grpc.reflection.") || service == "grpc.health.v1.Health"
+}
+
+// handleMethods lists every method on the target with its request/response
+// types and streaming shape, so the UI never needs a .proto file.
 func handleMethods(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	conn := connArgs(tlsOf(r))
 
-	out, err := grpcurlRun(ctx, "", "-plaintext", addrOf(r), "list")
+	out, err := grpcurlRun(ctx, "", append(conn, addrOf(r), "list")...)
 	if err != nil {
 		writeJSON(w, map[string]any{"error": strings.TrimSpace(out)})
 		return
@@ -102,57 +156,254 @@ func handleMethods(w http.ResponseWriter, r *http.Request) {
 
 	type svc struct {
 		Name    string   `json:"name"`
-		Methods []string `json:"methods"`
+		Methods []method `json:"methods"`
 	}
 	var services []svc
 	for _, name := range strings.Fields(out) {
-		// Reflection and health are noise for day-to-day testing.
-		if strings.HasPrefix(name, "grpc.reflection.") || name == "grpc.health.v1.Health" {
+		if isNoise(name) {
 			continue
 		}
-		mo, merr := grpcurlRun(ctx, "", "-plaintext", addrOf(r), "list", name)
-		if merr != nil {
+		d, derr := grpcurlRun(ctx, "", append(conn, addrOf(r), "describe", name)...)
+		if derr != nil {
 			continue
 		}
-		methods := strings.Fields(mo)
-		sort.Strings(methods)
-		services = append(services, svc{Name: name, Methods: methods})
+		services = append(services, svc{Name: name, Methods: parseMethods(name, d)})
 	}
 	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	writeJSON(w, map[string]any{"services": services})
 }
 
-// handleTemplate returns grpcurl's own describe output for the request message,
-// which gives a skeleton to edit rather than a blank page.
+// describeSymbol returns the proto text for a symbol and, for messages, the
+// JSON template grpcurl derives from it.
+func describeSymbol(ctx context.Context, addr string, tls bool, symbol string) (text, template string, err error) {
+	out, err := grpcurlRun(ctx, "", append(connArgs(tls), "-msg-template", addr, "describe", symbol)...)
+	if err != nil {
+		return strings.TrimSpace(out), "", err
+	}
+	text = strings.TrimSpace(out)
+	if i := strings.Index(out, "Message template:"); i >= 0 {
+		text = strings.TrimSpace(out[:i])
+		template = strings.TrimSpace(out[i+len("Message template:"):])
+	}
+	return text, template, nil
+}
+
+// handleTemplate resolves the method's real input type through reflection
+// (no <Method>Request guessing) and returns its skeleton plus the proto text
+// of both request and response so the developer can read field docs in place.
 func handleTemplate(w http.ResponseWriter, r *http.Request) {
-	method := r.URL.Query().Get("method")
-	if method == "" {
+	name := r.URL.Query().Get("method")
+	if name == "" {
 		writeJSON(w, map[string]any{"error": "method is required"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	addr, tls := addrOf(r), tlsOf(r)
 
-	out, err := grpcurlRun(ctx, "", "-plaintext", "-msg-template", addrOf(r), "describe", method+"Request")
+	sig, _, err := describeSymbol(ctx, addr, tls, name)
 	if err != nil {
-		// Not every request message follows the <Method>Request convention;
-		// an empty template is a fine starting point, not an error worth
-		// blocking on.
-		writeJSON(w, map[string]any{"template": "{}"})
+		writeJSON(w, map[string]any{"error": sig})
 		return
 	}
-	if i := strings.Index(out, "{"); i >= 0 {
-		out = out[i:]
+	m := rpcLine.FindStringSubmatch(sig)
+	if m == nil {
+		writeJSON(w, map[string]any{"error": "cannot parse method signature:\n" + sig})
+		return
 	}
-	writeJSON(w, map[string]any{"template": strings.TrimSpace(out)})
+	inText, template, _ := describeSymbol(ctx, addr, tls, m[3])
+	outText, _, _ := describeSymbol(ctx, addr, tls, m[5])
+	if template == "" {
+		template = "{}"
+	}
+	writeJSON(w, map[string]any{
+		"template":     template,
+		"input":        m[3],
+		"output":       m[5],
+		"clientStream": m[2] != "",
+		"serverStream": m[4] != "",
+		"describe":     sig + "\n\n" + inText + "\n\n" + outText,
+	})
+}
+
+// handleDescribe describes any symbol -- the UI uses it to expand a
+// google.protobuf.Any into the concrete type's template.
+func handleDescribe(w http.ResponseWriter, r *http.Request) {
+	symbol := strings.TrimPrefix(r.URL.Query().Get("symbol"), "type.googleapis.com/")
+	if symbol == "" {
+		writeJSON(w, map[string]any{"error": "symbol is required"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	text, template, err := describeSymbol(ctx, addrOf(r), tlsOf(r), symbol)
+	if err != nil {
+		writeJSON(w, map[string]any{"error": text})
+		return
+	}
+	writeJSON(w, map[string]any{"describe": text, "template": template})
+}
+
+// typeCache remembers the message-type index per target so the Any picker is
+// instant after the first load. Reload clears it.
+var typeCache sync.Map // addr -> []string
+
+// handleTypes walks every message reachable from every service through
+// reflection and returns the sorted set of fully-qualified names. This is the
+// list a developer picks from when filling an Any -- the server itself is the
+// source of truth for which concrete types exist.
+func handleTypes(w http.ResponseWriter, r *http.Request) {
+	addr, tls := addrOf(r), tlsOf(r)
+	key := fmt.Sprintf("%s|%v", addr, tls)
+	if r.URL.Query().Get("refresh") == "1" {
+		typeCache.Delete(key)
+	}
+	if v, ok := typeCache.Load(key); ok {
+		writeJSON(w, map[string]any{"types": v, "cached": true})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	conn := connArgs(tls)
+
+	out, err := grpcurlRun(ctx, "", append(conn, addr, "list")...)
+	if err != nil {
+		writeJSON(w, map[string]any{"error": strings.TrimSpace(out)})
+		return
+	}
+	seen := map[string]bool{}
+	var queue []string
+	for _, s := range strings.Fields(out) {
+		if !isNoise(s) {
+			queue = append(queue, s)
+			seen[s] = true
+		}
+	}
+	// ponytail: one grpcurl exec per type, fine for a few hundred; batch
+	// symbols in one describe call if a target ever has thousands.
+	var types []string
+	for len(queue) > 0 {
+		sym := queue[0]
+		queue = queue[1:]
+		d, derr := grpcurlRun(ctx, "", append(conn, addr, "describe", sym)...)
+		if derr != nil {
+			continue
+		}
+		if strings.Contains(d, " is a message:") {
+			types = append(types, sym)
+		}
+		for _, ref := range extractTypeRefs(d) {
+			if !seen[ref] {
+				seen[ref] = true
+				queue = append(queue, ref)
+			}
+		}
+	}
+	sort.Strings(types)
+	typeCache.Store(key, types)
+	writeJSON(w, map[string]any{"types": types})
+}
+
+// extractTypeRefs pulls `.pkg.Type` references out of describe output.
+func extractTypeRefs(describe string) []string {
+	var refs []string
+	for _, m := range typeRef.FindAllStringSubmatch(describe, -1) {
+		refs = append(refs, m[1])
+	}
+	return refs
+}
+
+// parseHeaders turns "k: v" lines into grpcurl -H arguments. Blank lines and
+// `#` comments are skipped so a developer can keep a scratch list.
+func parseHeaders(text string) []string {
+	var args []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, ":") {
+			continue
+		}
+		args = append(args, "-H", line)
+	}
+	return args
+}
+
+// shellQuote renders args as a pasteable shell command.
+func shellQuote(args []string) string {
+	q := make([]string, len(args))
+	for i, a := range args {
+		if regexp.MustCompile(`^[\w./:@=-]+$`).MatchString(a) {
+			q[i] = a
+		} else {
+			q[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(q, " ")
+}
+
+type historyEntry struct {
+	At      string `json:"at"`
+	Addr    string `json:"addr"`
+	Method  string `json:"method"`
+	Payload string `json:"payload"`
+	OK      bool   `json:"ok"`
+	Ms      int64  `json:"ms"`
+}
+
+var historyMu sync.Mutex
+
+func historyPath() string { return filepath.Join(*payloadDir, ".history.jsonl") }
+
+func appendHistory(e historyEntry) {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	f, err := os.OpenFile(historyPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_ = json.NewEncoder(f).Encode(e)
+}
+
+// handleHistory returns the most recent calls, newest first, so a request
+// from ten minutes ago is one click away instead of a rebuild.
+func handleHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		historyMu.Lock()
+		_ = os.Remove(historyPath())
+		historyMu.Unlock()
+		writeJSON(w, map[string]any{"cleared": true})
+		return
+	}
+	historyMu.Lock()
+	b, _ := os.ReadFile(historyPath())
+	historyMu.Unlock()
+	var entries []historyEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		var e historyEntry
+		if json.Unmarshal([]byte(line), &e) == nil {
+			entries = append(entries, e)
+		}
+	}
+	const keep = 100
+	if len(entries) > keep {
+		entries = entries[len(entries)-keep:]
+	}
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	writeJSON(w, map[string]any{"history": entries})
 }
 
 func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Addr    string `json:"addr"`
-		Method  string `json:"method"`
-		Payload string `json:"payload"`
-		Token   string `json:"token"`
+		Addr         string `json:"addr"`
+		Method       string `json:"method"`
+		Payload      string `json:"payload"`
+		Token        string `json:"token"`
+		Headers      string `json:"headers"`
+		TLS          bool   `json:"tls"`
+		EmitDefaults bool   `json:"emitDefaults"`
+		Verbose      bool   `json:"verbose"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, map[string]any{"error": err.Error()})
@@ -172,23 +423,37 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), *callTimeout)
 	defer cancel()
 
-	args := []string{"-plaintext", "-max-time", fmt.Sprintf("%.0f", callTimeout.Seconds())}
+	args := append(connArgs(req.TLS), "-format-error", "-max-time", fmt.Sprintf("%.0f", callTimeout.Seconds()))
+	if req.EmitDefaults {
+		args = append(args, "-emit-defaults")
+	}
+	if req.Verbose {
+		args = append(args, "-v")
+	}
 	if req.Token != "" {
 		args = append(args, "-H", "authorization: Bearer "+req.Token)
 	}
+	args = append(args, parseHeaders(req.Headers)...)
 	args = append(args, "-d", "@", req.Addr, req.Method)
 
 	started := time.Now()
 	out, err := grpcurlRun(ctx, req.Payload, args...)
+	ms := time.Since(started).Milliseconds()
+	appendHistory(historyEntry{At: started.Format(time.RFC3339), Addr: req.Addr, Method: req.Method, Payload: req.Payload, OK: err == nil, Ms: ms})
+
+	// Pasteable equivalent, with the body inline instead of on stdin.
+	cmdArgs := append([]string{"grpcurl"}, args[:len(args)-4]...)
+	cmdArgs = append(cmdArgs, "-d", req.Payload, req.Addr, req.Method)
 	writeJSON(w, map[string]any{
-		"output": out,
-		"ok":     err == nil,
-		"ms":     time.Since(started).Milliseconds(),
+		"output":  out,
+		"ok":      err == nil,
+		"ms":      ms,
+		"command": shellQuote(cmdArgs),
 	})
 }
 
-// handlePayloads lists saved bodies on GET and saves one on POST, so a working
-// request can be kept without leaving the browser.
+// handlePayloads lists saved bodies on GET, saves one on POST and removes one
+// on DELETE, so a working request can be kept without leaving the browser.
 func handlePayloads(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -241,6 +506,18 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]any{"saved": name + ".json"})
+
+	case http.MethodDelete:
+		name := strings.TrimSuffix(r.URL.Query().Get("name"), ".json")
+		if !safeName.MatchString(name) {
+			writeJSON(w, map[string]any{"error": "bad name"})
+			return
+		}
+		if err := os.Remove(filepath.Join(*payloadDir, name+".json")); err != nil {
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"deleted": name + ".json"})
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

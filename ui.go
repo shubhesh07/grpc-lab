@@ -52,8 +52,12 @@ details.t>summary::before{content:"\25BC";display:inline-block;width:14px;font-s
 details.t:not([open])>summary .cl{display:inline}details.t>summary .cl{display:none}details.t>summary .cnt{color:var(--dim);font-size:11px}details.t[open]>summary .cnt{display:none}
 .tb{margin-left:6px;padding-left:22px;border-left:1px solid var(--line)}.tb>div{white-space:pre}.tb>div.leaf,.te{padding-left:14px}.te{white-space:pre}
 .leaf .v:hover{outline:1px dashed var(--acc);cursor:text}
-.tog{color:var(--dim);opacity:.35;cursor:pointer;margin-right:6px;font-size:11px}.tog:hover,.tog.on{opacity:1;color:var(--warn)}.off,.k.off{color:var(--dim);text-decoration:line-through;opacity:.7}
-#reqtree{display:none;border:1px solid var(--line);border-radius:6px;background:#0c0e12;padding:8px;height:calc(100vh - 330px);min-height:160px;overflow:auto}
+.pen{color:var(--dim);opacity:.35;cursor:pointer;margin-left:8px;font-size:11px}.pen:hover{opacity:1;color:var(--acc)}details.t>summary:hover .pen,.te:hover .pen{opacity:.8}
+.ed{display:block;width:100%;min-height:80px;margin:4px 0;white-space:pre;font:inherit}.edrow{margin:2px 0 6px}.edrow button{margin-right:6px}
+.leaf input.iv{padding:1px 4px;font:inherit;min-width:120px}
+.hintline{color:var(--dim);font-size:11px;margin:4px 0}
+.tog{color:var(--dim);opacity:0;cursor:pointer;margin-right:6px;font-size:11px}.leaf:hover>.tog,summary:hover>.tog,.te:hover>.tog{opacity:.6}.tog:hover,.tog.on{opacity:1;color:var(--warn)}.off,.k.off{color:var(--dim);text-decoration:line-through;opacity:.7}
+#reqtree{border:1px solid var(--line);border-radius:6px;background:#0c0e12;padding:8px;height:calc(100vh - 330px);min-height:160px;overflow:auto}
 .k{color:#7dd3fc}.s{color:#86efac}.n{color:#fb923c}.b{color:#f0abfc}
 kbd{font-size:10px;color:var(--dim)}
 .types{color:var(--dim);font-size:11px}
@@ -80,14 +84,13 @@ kbd{font-size:10px;color:var(--dim)}
     </div>
     <div class="row">
       <button onclick="loadTemplate(true)" title="regenerate request skeleton from reflection">Template</button>
-      <button id="reqview" onclick="toggleReq()" title="fold the request; double-click a value to edit it; // disables a key">Tree</button>
       <button onclick="save()">Save…</button>
       <button onclick="pasteCurl()" title="paste a grpcurl command: target, headers, body and method are filled in">Paste grpcurl</button>
       <button class="primary" onclick="invoke()">Invoke <kbd>⌃⏎</kbd></button>
       <label class="chk"><input type="checkbox" id="emit">emit defaults</label>
       <label class="chk"><input type="checkbox" id="verbose">verbose</label>
     </div>
-    <textarea id="body" spellcheck="false" placeholder="{}"></textarea>
+    <textarea id="body" spellcheck="false" style="display:none"></textarea>
     <div id="reqtree"></div>
     <div id="anybox"></div>
     <details><summary>Metadata headers</summary>
@@ -111,7 +114,7 @@ kbd{font-size:10px;color:var(--dim)}
 </main>
 <datalist id="typelist"></datalist>
 <script>
-let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true, reqTree = false;
+let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true, reqTree = true;
 // Request tabs: each is an independent workspace (method + body); the active
 // one is what the editor shows. Persisted as one blob.
 let tabs = [], cur = 0;
@@ -173,7 +176,7 @@ async function pick(name){
   await loadTemplate(true);
   if (method !== name) return;              // user already clicked elsewhere
   if (saved) $("body").value = saved;
-  saveTab(); if (reqTree) renderReq();
+  saveTab(); renderReq();
 }
 
 async function loadTemplate(replace){
@@ -187,8 +190,7 @@ async function loadTemplate(replace){
   if (replace || !$("body").value.trim() || confirm("Replace the current request body with the template?")){
     let t = r.template || "{}";
     if (r.clientStream) t += "\n" + t; // stdin takes many messages: show two so the shape is obvious
-    $("body").value = t; saveTab(); $("anybox").innerHTML = "";
-    if (reqTree) renderReq();
+    $("body").value = t; saveTab(); $("anybox").innerHTML = ""; renderReq();
   }
 }
 
@@ -289,8 +291,7 @@ async function fillAny(i, segs){
   let tpl = {}; try { tpl = JSON.parse(r.template || "{}"); } catch(e){}
   const objs = parseMany($("body").value);
   setPath(objs, segs, Object.assign({ "@type": "type.googleapis.com/" + t }, tpl));
-  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); if (reqTree) renderReq();
-  setStatus("filled " + showPath(segs) + " with " + t, true); scanAny();
+  setBody(objs); setStatus("filled " + showPath(segs) + " with " + t, true);
 }
 // segs[0] is the message index (client streams carry several); the rest walk into it.
 function setPath(objs, segs, val){
@@ -374,7 +375,7 @@ async function switchTab(i){
   if (i === cur) return;
   tabs[cur] = { method, body: $("body").value }; cur = i;
   const t = tabs[cur]; method = ""; $("anybox").innerHTML = "";
-  if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) await pick(t.method); else { $("body").value = t.body; $("sel").textContent = "no method selected"; renderMethods(); }
+  if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) await pick(t.method); else { $("body").value = t.body; $("sel").textContent = "no method selected"; renderMethods(); renderReq(); }
   saveTab();
 }
 function newTab(){ tabs[cur] = { method, body: $("body").value }; tabs.push({ method: "", body: "" }); switchTab(tabs.length - 1); }
@@ -450,21 +451,47 @@ function tree(v, key, last, segs, editable){
   const label = key === "" ? "" : (editable && typeof segs[segs.length - 1] === "string" ? '<span class="tog' + (off ? " on" : "") + '" title="' + (off ? "enable" : "disable (kept in body, not sent)") + '" data-s="' + esc(JSON.stringify(segs)) + '" onclick="toggleKey(JSON.parse(this.dataset.s))">//</span>' : '') +
     '<span class="k' + (off ? " off" : "") + '">"' + esc(key) + '"</span>: ';
   if (off) return '<div class="leaf off">' + label + esc(JSON.stringify(v)) + comma + '</div>';
+  const sj = esc(JSON.stringify(segs));
   if (v === null || typeof v !== "object")
-    return '<div class="leaf">' + label + '<span class="v" data-s="' + esc(JSON.stringify(segs)) + '"' + (editable ? ' ondblclick="editLeaf(this)"' : '') + '>' + hl(JSON.stringify(v)) + '</span>' + comma + '</div>';
+    return '<div class="leaf">' + label + '<span class="v" data-s="' + sj + '"' + (editable ? ' ondblclick="editLeaf(this)" title="double-click to edit"' : '') + '>' + hl(JSON.stringify(v)) + '</span>' + comma + '</div>';
   const arr = Array.isArray(v), keys = Object.keys(v), o = arr ? "[" : "{", c = arr ? "]" : "}";
-  if (!keys.length) return '<div class="te">' + label + o + c + comma + '</div>';
-  return '<details class="t" open><summary>' + label + o + '<span class="cnt"> \u2026 ' + keys.length + ' </span><span class="cl">' + c + comma + '</span></summary><div class="tb">' +
+  const pen = editable ? '<span class="pen" title="edit this ' + (arr ? "array" : "object") + ' as JSON" data-s="' + sj + '" onclick="event.preventDefault();editNode(JSON.parse(this.dataset.s))">\u270E</span>' : '';
+  const wrap = editable ? ' data-n="' + sj + '"' : '';
+  if (!keys.length) return '<div class="te"' + wrap + '>' + label + o + c + comma + pen + '</div>';
+  return '<div' + wrap + '><details class="t" open><summary>' + label + o + '<span class="cnt"> \u2026 ' + keys.length + ' </span><span class="cl">' + c + comma + '</span>' + pen + '</summary><div class="tb">' +
     keys.map((k, i) => tree(v[k], arr ? "" : k, i === keys.length - 1, segs.concat(arr ? i : k), editable)).join("") +
-    '</div><div class="te">' + c + comma + '</div></details>';
+    '</div><div class="te">' + c + comma + '</div></details></div>';
 }
 function foldAll(open){ document.querySelectorAll("#out details, #reqtree details").forEach(d => d.open = open); }
 
 // Request tree: same renderer over the editor's JSON; edits round-trip.
-function toggleReq(){ reqTree = !reqTree; $("reqview").textContent = reqTree ? "Edit" : "Tree"; $("body").style.display = reqTree ? "none" : ""; $("reqtree").style.display = reqTree ? "block" : "none"; if (reqTree) renderReq(); }
+// The tree IS the request editor. #body (hidden) holds the JSON text as the
+// source of truth; every edit re-renders from it.
 function renderReq(){
-  let objs; try { objs = parseMany($("body").value); } catch(e){ $("reqtree").innerHTML = '<span style="color:var(--err)">' + esc("invalid JSON: " + e.message) + '</span>'; return; }
-  $("reqtree").innerHTML = objs.map((o, i) => tree(o, "", true, [i], true)).join('<hr style="border:0;border-top:1px dashed var(--line)">');
+  let objs; try { objs = parseMany($("body").value || "{}"); } catch(e){ $("reqtree").innerHTML = '<span style="color:var(--err)">' + esc("invalid JSON: " + e.message) + '</span> <button class="small" onclick="editNode([0])">fix</button>'; return; }
+  if (!objs.length) objs = [{}];
+  $("reqtree").innerHTML = objs.map((o, i) => tree(o, "", true, [i], true)).join('<hr style="border:0;border-top:1px dashed var(--line)">') +
+    (meta.clientStream ? '<div class="hintline">client stream: each message is sent in order <button class="small" onclick="addMessage()">+ message</button></div>' : '') +
+    '<div class="hintline">double-click a value to edit · \u270E edits a whole object as JSON (comments allowed) · // disables a key</div>';
+}
+function setBody(objs){ $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); renderReq(); scanAny(true); }
+function addMessage(){ const objs = parseMany($("body").value || "{}"); objs.push(JSON.parse(JSON.stringify(objs[objs.length - 1] || {}))); setBody(objs); }
+// editNode swaps a subtree (or the root) for a textarea holding its JSON.
+function editNode(segs){
+  const objs = parseMany($("body").value || "{}");
+  let v = objs[segs[0]]; segs.slice(1).forEach(k => v = v[k]);
+  const holder = document.querySelector('#reqtree [data-n="' + CSS.escape(JSON.stringify(segs)) + '"]') || $("reqtree");
+  const ta = document.createElement("textarea"); ta.className = "ed"; ta.value = JSON.stringify(v, null, 2); ta.rows = Math.min(30, ta.value.split("\n").length + 1); ta.spellcheck = false;
+  const row = document.createElement("div"); row.className = "edrow";
+  const ok = document.createElement("button"); ok.className = "small primary"; ok.textContent = "apply"; const no = document.createElement("button"); no.className = "small"; no.textContent = "cancel";
+  row.append(ok, no); holder.replaceChildren(ta, row); ta.focus();
+  no.onclick = renderReq;
+  ok.onclick = () => {
+    let val; try { const many = parseMany(ta.value); if (many.length !== 1) throw new Error("exactly one JSON value expected"); val = many[0]; } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+    if (segs.length === 1) objs[segs[0]] = val; else setPath(objs, segs, val);
+    setBody(objs); setStatus("updated " + showPath(segs), true);
+  };
+  ta.onkeydown = e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); e.stopPropagation(); ok.onclick(); } else if (e.key === "Escape") renderReq(); else if (e.key === "Tab"){ e.preventDefault(); const a = ta.selectionStart; ta.value = ta.value.slice(0, a) + "  " + ta.value.slice(ta.selectionEnd); ta.selectionStart = ta.selectionEnd = a + 2; } };
 }
 function toggleKey(segs){
   const objs = parseMany($("body").value);
@@ -472,15 +499,19 @@ function toggleKey(segs){
   const k = segs[segs.length - 1], nk = k.startsWith("//") ? k.slice(2) : "//" + k;
   const rebuilt = {}; for (const key of Object.keys(o)) rebuilt[key === k ? nk : key] = o[key]; // keep key order
   Object.keys(o).forEach(key => delete o[key]); Object.assign(o, rebuilt);
-  $("body").value = objs.map(x => JSON.stringify(x, null, 2)).join("\n"); saveTab(); renderReq(); scanAny(true);
+  setBody(objs);
 }
 function editLeaf(el){
-  const cur = el.textContent, nv = prompt("new value (JSON literal, e.g. \"text\", 42, true, null):", cur);
-  if (nv === null || nv === cur) return;
-  let val; try { val = JSON.parse(nv); } catch(e){ setStatus("not a JSON literal: " + nv, false); return; }
-  const objs = parseMany($("body").value);
-  setPath(objs, JSON.parse(el.dataset.s), val);
-  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); renderReq();
+  const cur = el.textContent, segs = JSON.parse(el.dataset.s);
+  const inp = document.createElement("input"); inp.className = "iv"; inp.value = cur; inp.size = Math.max(8, cur.length + 2); inp.title = "JSON literal: \"text\", 42, true, null · Enter applies, Esc cancels";
+  el.replaceWith(inp); inp.focus(); inp.select();
+  const commit = () => {
+    const nv = inp.value.trim(); if (nv === cur){ renderReq(); return; }
+    let val; try { val = JSON.parse(nv); } catch(e){ val = nv; } // unquoted text becomes a string
+    const objs = parseMany($("body").value); setPath(objs, segs, val); setBody(objs);
+  };
+  inp.onkeydown = e => { if (e.key === "Enter"){ e.preventDefault(); e.stopPropagation(); commit(); } else if (e.key === "Escape") renderReq(); };
+  inp.onblur = commit;
 }
 // Cheap JSON colouring on the escaped text; grpcurl already pretty-prints.
 function hl(s){ return String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])).replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b/g,
@@ -488,6 +519,6 @@ function hl(s){ return String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":
 document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); invoke(); } });
 
 renderTabs();
-loadMethods().then(() => { const t = tabs[cur]; if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) pick(t.method); else $("body").value = t.body; });
+loadMethods().then(() => { const t = tabs[cur]; if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) pick(t.method); else { $("body").value = t.body; renderReq(); } });
 loadSaved(); loadHistory();
 </script></body></html>`

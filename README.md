@@ -45,15 +45,12 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   schema (walked via reflection); any `Any`-typed position without `@type`
   blocks the call with its exact path (grpcurl's own error never says which
   field). Delete the field or fill it from the picker.
-- Request and response both render as a **collapsible JSON tree** (arrows,
-  guide lines, collapse/expand all). `Tree` on the request folds the body;
-  double-click a value to edit it in place; the `//` toggle on a key disables
-  it (kept in the body as `"//key"`, dropped when sent). `raw` shows the
-  response as text.
-- The editor accepts `//` and `/* */` comments, so any object or array element
-  can be commented out instead of deleted; comments are stripped when sent.
-  (Edits made in the tree re-serialise the body, which drops text comments —
-  use the `//` key toggle there instead.)
+- The request is a **collapsible JSON tree that is also the editor**:
+  double-click a value to edit it inline; `✎` on any object/array (or the
+  root) opens it as JSON text to replace wholesale — paste a whole body there,
+  `//` and `/* */` comments allowed; the `//` toggle on a key disables it
+  (kept as `"//key"`, dropped when sent). Client streams get `+ message`.
+- The response renders as the same tree (collapse/expand all, `raw` for text).
 - **Request tabs** — `+` opens an independent workspace (method + body);
   tabs persist across reloads.
 - **Paste grpcurl** — paste a full `grpcurl … host:port svc/Method` command;

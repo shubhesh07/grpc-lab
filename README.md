@@ -1,5 +1,7 @@
 # grpc-lab
 
+[![Go](https://img.shields.io/badge/go-stdlib%20only-5eead4)](go.mod) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A browser UI for exercising gRPC services during development. Point it at a
 running server, pick a method, edit JSON, invoke.
 
@@ -15,9 +17,9 @@ go run . -addr localhost:8086
 whose request carries a `google.protobuf.Any`. It builds its type registry from
 the method's descriptor closure, and an `Any` is opaque to that, so the concrete
 type never resolves and the call fails in the browser with
-`Unexpected error: error` before reaching the server. That rules out
-catalog-service's `CartWorkerService/ExecuteWorker`, where every cart's
-`seller_info` is an `Any`.
+`Unexpected error: error` before reaching the server. That rules out any
+service whose requests carry an `Any` — the case that motivated this tool was a
+cart worker where every cart's `seller_info` is one.
 
 Passing `-protoset` with the concrete types does get the request out of the
 browser, but then reflection is disabled and the instance only exposes whatever
@@ -82,9 +84,13 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 ## Limits
 
 - `-insecure` TLS only (no CA/client certs yet).
-- Requires reflection enabled on the target (go-commons registers it by default).
+- Requires reflection enabled on the target.
 - The `Any` type picker lists every message in files reachable from the
   services. A type that lives in a file nothing references can still be
   typed by hand — the server resolves it at invoke time.
 - Binds to `127.0.0.1` and shells out to `grpcurl` — a local dev tool, not
   something to expose on a network.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.

@@ -100,7 +100,7 @@ kbd{font-size:10px;color:var(--dim)}
     <details><summary>Metadata headers</summary>
       <textarea id="headers" class="aux" spellcheck="false" placeholder="x-tenant-id: 1&#10;x-request-id: abc"></textarea></details>
     <details><summary>Variables ({{name}} in body)</summary>
-      <textarea id="vars" class="aux" spellcheck="false" placeholder="customerId=30000&#10;sellerId=20"></textarea></details>
+      <textarea id="vars" class="aux" spellcheck="false" placeholder="customerId=123&#10;sellerId=1"></textarea></details>
   </section>
   <section>
     <div class="row">

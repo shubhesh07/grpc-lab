@@ -3,3 +3,4 @@ grpc-lab
 !/payloads/README.md
 payloads/.history.jsonl
 img.png
+.idea/

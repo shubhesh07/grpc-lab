@@ -45,8 +45,13 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0c0e12;border:1px sol
 .anyrow .p{color:var(--warn);flex:none}
 details{margin-bottom:8px}summary{cursor:pointer;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
 .anyrow .p.bad{color:var(--err)}
-details.t{display:inline;margin:0}details.t>summary{display:inline;cursor:pointer;list-style:none;text-transform:none;font-size:inherit;letter-spacing:0;color:inherit}details.t[open]>summary .cl{display:none}details.t>summary .cnt{color:var(--dim);font-size:11px}details.t[open]>summary .cnt{display:none}details.t[open]>summary::after{content:""}.tb{padding-left:18px;border-left:1px solid var(--line);margin-left:3px}
-.k{color:#93c5fd}.s{color:#86efac}.n{color:#fbbf24}.b{color:#f0abfc}
+details.t{margin:0}details.t>summary{cursor:pointer;list-style:none;text-transform:none;font-size:inherit;letter-spacing:0;color:inherit;white-space:pre}
+details.t>summary::before{content:"\25BC";display:inline-block;width:14px;font-size:9px;color:var(--dim)}details.t:not([open])>summary::before{content:"\25B6"}
+details.t:not([open])>summary .cl{display:inline}details.t>summary .cl{display:none}details.t>summary .cnt{color:var(--dim);font-size:11px}details.t[open]>summary .cnt{display:none}
+.tb{margin-left:6px;padding-left:22px;border-left:1px solid var(--line)}.tb>div{white-space:pre}.tb>div.leaf,.te{padding-left:14px}.te{white-space:pre}
+.leaf .v:hover{outline:1px dashed var(--acc);cursor:text}
+#reqtree{display:none;border:1px solid var(--line);border-radius:6px;background:#0c0e12;padding:8px;height:calc(100vh - 330px);min-height:160px;overflow:auto}
+.k{color:#7dd3fc}.s{color:#86efac}.n{color:#fb923c}.b{color:#f0abfc}
 kbd{font-size:10px;color:var(--dim)}
 .types{color:var(--dim);font-size:11px}
 </style></head><body>
@@ -72,6 +77,7 @@ kbd{font-size:10px;color:var(--dim)}
     <div class="row">
       <button onclick="loadTemplate(true)" title="regenerate request skeleton from reflection">Template</button>
       <button onclick="format()">Format</button>
+      <button id="reqview" onclick="toggleReq()" title="fold the request; double-click a value to edit it">Tree</button>
       <button onclick="scanAny()" title="find google.protobuf.Any fields and fill them with a concrete type">Any…</button>
       <button onclick="save()">Save…</button>
       <button class="primary" onclick="invoke()">Invoke <kbd>⌃⏎</kbd></button>
@@ -79,6 +85,7 @@ kbd{font-size:10px;color:var(--dim)}
       <label class="chk"><input type="checkbox" id="verbose">verbose</label>
     </div>
     <textarea id="body" spellcheck="false" placeholder="{}"></textarea>
+    <div id="reqtree"></div>
     <div id="anybox"></div>
     <details><summary>Metadata headers</summary>
       <textarea id="headers" class="aux" spellcheck="false" placeholder="x-tenant-id: 1&#10;x-request-id: abc"></textarea></details>
@@ -101,7 +108,7 @@ kbd{font-size:10px;color:var(--dim)}
 </main>
 <datalist id="typelist"></datalist>
 <script>
-let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true;
+let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true, reqTree = false;
 const $ = id => document.getElementById(id);
 const addr = () => $("addr").value.trim();
 const conn = () => "addr=" + encodeURIComponent(addr()) + "&tls=" + ($("tls").checked ? 1 : 0);
@@ -113,6 +120,8 @@ const ls = { get: k => { try { return localStorage.getItem("grpclab:" + k) || ""
 ["addr","token","headers","vars"].forEach(k => { if (ls.get(k)) $(k).value = ls.get(k); $(k).oninput = () => ls.set(k, $(k).value); });
 $("tls").checked = ls.get("tls") === "1"; $("tls").onchange = () => { ls.set("tls", $("tls").checked ? "1" : "0"); loadMethods(true); };
 $("body").oninput = () => { if (method) ls.set("body:" + method, $("body").value); };
+// Tab indents instead of leaving the editor.
+$("body").addEventListener("keydown", e => { if (e.key === "Tab"){ e.preventDefault(); const t = e.target, a = t.selectionStart; t.value = t.value.slice(0, a) + "  " + t.value.slice(t.selectionEnd); t.selectionStart = t.selectionEnd = a + 2; } });
 
 async function loadMethods(refresh){
   $("methods").textContent = "loading…"; types = [];
@@ -150,8 +159,10 @@ async function pick(name){
   renderMethods();
   $("sel").innerHTML = esc(name) + ' <span style="color:var(--dim)">' + esc(meta.input) + ' → ' + esc(meta.output) + '</span>';
   const saved = ls.get("body:" + name);
-  await loadTemplate(!saved);
+  $("body").value = ""; $("anybox").innerHTML = "";
+  await loadTemplate(true);
   if (saved) $("body").value = saved;
+  if (reqTree) renderReq();
 }
 
 async function loadTemplate(replace){
@@ -171,6 +182,7 @@ function format(){
   const txt = $("body").value;
   try { $("body").value = parseMany(txt).map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value); }
   catch(e){ setStatus("invalid JSON: " + e.message, false); }
+  if (reqTree) renderReq();
 }
 // Client-streaming bodies are several JSON objects back to back; parse them all.
 function parseMany(txt){
@@ -199,7 +211,8 @@ function findAny(objs){
     for (const k of Object.keys(v)){
       const f = fields[k]; if (!f) continue;
       const each = (x, p) => {
-        if (f.kind === "any"){ const ok = x && typeof x === "object" && "@type" in x;
+        if (f.kind === "any"){ if (x == null) return; // null = unset, grpcurl accepts it
+          const ok = typeof x === "object" && "@type" in x;
           found.push({ path: p, type: ok ? String(x["@type"]).replace("type.googleapis.com/", "") : "", missing: !ok }); }
         else if (f.kind === "msg") walkSchema(x, f.type, p);
       };
@@ -239,7 +252,7 @@ async function fillAny(i, path){
   let idx = 0, p = path;
   const m = /^#(\d+)\.?/.exec(p); if (m){ idx = +m[1]; p = p.slice(m[0].length); }
   setPath(objs[idx], p, Object.assign({ "@type": "type.googleapis.com/" + t }, tpl));
-  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value);
+  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value); if (reqTree) renderReq();
   setStatus("filled " + (path || "$") + " with " + t, true); scanAny();
 }
 function setPath(root, path, val){
@@ -310,25 +323,43 @@ function tab(t){ ["out","desc","cmd"].forEach(x => { $(x).style.display = x === 
 function copy(t){ navigator.clipboard.writeText(t).then(() => setStatus("copied", true)); }
 function setStatus(t, ok){ const s = $("status"); s.textContent = t; s.className = "pill" + (ok === true ? " ok" : ok === false ? " err" : ""); }
 function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-// Response as a collapsible tree when it parses as JSON (one or more
-// messages), otherwise the raw text. Click a key to fold that object.
+// Collapsible JSON tree (JSON-Viewer style: arrows, guide lines, trailing
+// commas, everything expanded). editable=true makes leaf values double-click
+// editable; the change is written back into the editor text.
 function renderOut(){
   $("treebtn").textContent = treeMode ? "raw" : "tree";
   let objs = null; if (treeMode) try { objs = parseMany(lastOut); } catch(e){}
-  $("out").innerHTML = objs && objs.length ? objs.map(tree).join('<hr style="border:0;border-top:1px dashed var(--line)">') : hl(lastOut);
+  $("out").innerHTML = objs && objs.length ? objs.map(o => tree(o, "", true, "")).join('<hr style="border:0;border-top:1px dashed var(--line)">') : hl(lastOut);
 }
-function tree(v, depth){
-  depth = depth || 0;
-  if (v === null || typeof v !== "object") return hl(JSON.stringify(v));
+function tree(v, key, last, path, editable){
+  const comma = last ? "" : ",", label = key === "" ? "" : '<span class="k">"' + esc(key) + '"</span>: ';
+  if (v === null || typeof v !== "object")
+    return '<div class="leaf">' + label + '<span class="v" data-p="' + esc(path) + '"' + (editable ? ' ondblclick="editLeaf(this)"' : '') + '>' + hl(JSON.stringify(v)) + '</span>' + comma + '</div>';
   const arr = Array.isArray(v), keys = Object.keys(v), o = arr ? "[" : "{", c = arr ? "]" : "}";
-  if (!keys.length) return o + c;
-  const open = depth < 2 ? " open" : "";
-  return '<details class="t"' + open + '><summary>' + o + '<span class="cnt"> ' + keys.length + (arr ? " items" : " keys") + ' </span><span class="cl">' + c + '</span></summary><div class="tb">' +
-    keys.map(k => '<div>' + (arr ? '' : '<span class="k">"' + esc(k) + '"</span>: ') + tree(v[k], depth + 1) + '</div>').join("") + '</div>' + c + '</details>';
+  if (!keys.length) return '<div class="te">' + label + o + c + comma + '</div>';
+  return '<details class="t" open><summary>' + label + o + '<span class="cnt"> \u2026 ' + keys.length + ' </span><span class="cl">' + c + comma + '</span></summary><div class="tb">' +
+    keys.map((k, i) => tree(v[k], arr ? "" : k, i === keys.length - 1, path + (arr ? "[" + k + "]" : (path ? "." : "") + k), editable)).join("") +
+    '</div><div class="te">' + c + comma + '</div></details>';
 }
-function foldAll(open){ document.querySelectorAll("#out details").forEach(d => d.open = open); }
+function foldAll(open){ document.querySelectorAll("#out details, #reqtree details").forEach(d => d.open = open); }
+
+// Request tree: same renderer over the editor's JSON; edits round-trip.
+function toggleReq(){ reqTree = !reqTree; $("reqview").textContent = reqTree ? "Edit" : "Tree"; $("body").style.display = reqTree ? "none" : ""; $("reqtree").style.display = reqTree ? "block" : "none"; if (reqTree) renderReq(); }
+function renderReq(){
+  let objs; try { objs = parseMany($("body").value); } catch(e){ $("reqtree").innerHTML = '<span style="color:var(--err)">' + esc("invalid JSON: " + e.message) + '</span>'; return; }
+  $("reqtree").innerHTML = objs.map((o, i) => tree(o, "", true, objs.length > 1 ? "#" + i : "", true)).join('<hr style="border:0;border-top:1px dashed var(--line)">');
+}
+function editLeaf(el){
+  const cur = el.textContent, nv = prompt("new value (JSON literal, e.g. \"text\", 42, true, null):", cur);
+  if (nv === null || nv === cur) return;
+  let val; try { val = JSON.parse(nv); } catch(e){ setStatus("not a JSON literal: " + nv, false); return; }
+  const objs = parseMany($("body").value);
+  let idx = 0, p = el.dataset.p; const m = /^#(\d+)\.?/.exec(p); if (m){ idx = +m[1]; p = p.slice(m[0].length); }
+  setPath(objs[idx], p, val);
+  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value); renderReq();
+}
 // Cheap JSON colouring on the escaped text; grpcurl already pretty-prints.
-function hl(s){ return esc(s).replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b/g,
+function hl(s){ return String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])).replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b/g,
   (m, str, colon, kw) => str ? (colon ? '<span class="k">' + str + '</span>' + colon : '<span class="s">' + str + '</span>') : kw ? '<span class="b">' + kw + '</span>' : '<span class="n">' + m + '</span>'); }
 document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); invoke(); } });
 

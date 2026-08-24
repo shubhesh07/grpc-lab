@@ -2,3 +2,4 @@ grpc-lab
 /payloads/*.json
 !/payloads/README.md
 payloads/.history.jsonl
+img.png

@@ -160,15 +160,10 @@ func handleMethods(w http.ResponseWriter, r *http.Request) {
 		Methods []method `json:"methods"`
 	}
 	var services []svc
-	for _, name := range strings.Fields(out) {
-		if isNoise(name) {
-			continue
+	for name, d := range describeAll(ctx, conn, addrOf(r), strings.Fields(out)) {
+		if !isNoise(name) {
+			services = append(services, svc{Name: name, Methods: parseMethods(name, d)})
 		}
-		d, derr := grpcurlRun(ctx, "", append(conn, addrOf(r), "describe", name)...)
-		if derr != nil {
-			continue
-		}
-		services = append(services, svc{Name: name, Methods: parseMethods(name, d)})
 	}
 	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	writeJSON(w, map[string]any{"services": services})
@@ -280,29 +275,61 @@ func handleTypes(w http.ResponseWriter, r *http.Request) {
 			seen[s] = true
 		}
 	}
-	// ponytail: one grpcurl exec per type, fine for a few hundred; batch
-	// symbols in one describe call if a target ever has thousands.
 	var types []string
 	for len(queue) > 0 {
-		sym := queue[0]
-		queue = queue[1:]
-		d, derr := grpcurlRun(ctx, "", append(conn, addr, "describe", sym)...)
-		if derr != nil {
-			continue
-		}
-		if strings.Contains(d, " is a message:") {
-			types = append(types, sym)
-		}
-		for _, ref := range extractTypeRefs(d) {
-			if !seen[ref] {
-				seen[ref] = true
-				queue = append(queue, ref)
+		descs := describeAll(ctx, conn, addr, queue)
+		queue = nil
+		for _, sym := range sortedKeys(descs) {
+			d := descs[sym]
+			if strings.Contains(d, " is a message:") {
+				types = append(types, sym)
+			}
+			for _, ref := range extractTypeRefs(d) {
+				if !seen[ref] {
+					seen[ref] = true
+					queue = append(queue, ref)
+				}
 			}
 		}
 	}
 	sort.Strings(types)
 	typeCache.Store(key, types)
 	writeJSON(w, map[string]any{"types": types})
+}
+
+// describeAll describes symbols concurrently (bounded); unresolvable ones
+// (e.g. option types like google.api.http) are simply absent from the result.
+func describeAll(ctx context.Context, conn []string, addr string, syms []string) map[string]string {
+	out := map[string]string{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for _, sym := range syms {
+		wg.Add(1)
+		go func(sym string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			d, err := grpcurlRun(ctx, "", append(conn, addr, "describe", sym)...)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			out[sym] = d
+			mu.Unlock()
+		}(sym)
+	}
+	wg.Wait()
+	return out
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // extractTypeRefs pulls `.pkg.Type` references out of describe output.
@@ -329,10 +356,12 @@ func parseHeaders(text string) []string {
 }
 
 // shellQuote renders args as a pasteable shell command.
+var plainArg = regexp.MustCompile(`^[\w./:@=-]+$`)
+
 func shellQuote(args []string) string {
 	q := make([]string, len(args))
 	for i, a := range args {
-		if regexp.MustCompile(`^[\w./:@=-]+$`).MatchString(a) {
+		if plainArg.MatchString(a) {
 			q[i] = a
 		} else {
 			q[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"

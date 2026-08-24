@@ -67,6 +67,7 @@ func main() {
 	http.HandleFunc("/api/template", handleTemplate)
 	http.HandleFunc("/api/describe", handleDescribe)
 	http.HandleFunc("/api/types", handleTypes)
+	http.HandleFunc("/api/schema", handleSchema)
 	http.HandleFunc("/api/invoke", handleInvoke)
 	http.HandleFunc("/api/payloads", handlePayloads)
 	http.HandleFunc("/api/history", handleHistory)
@@ -533,4 +534,114 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	// Not Fprintf: the page's CSS is full of literal % (100%, calc()), which a
 	// format string would misread as verbs.
 	fmt.Fprint(w, strings.Replace(indexHTML, "{{ADDR}}", *defaultAddr, 1))
+}
+
+// fieldLine matches one field of a `describe <message>` block:
+//
+//	repeated .pkg.T name = 1;   map<string, .pkg.T> name = 2;   string name = 3;
+var fieldLine = regexp.MustCompile(`^\s*(repeated\s+|optional\s+)?(map<\s*\w+\s*,\s*\.?([\w.]+)\s*>|\.?([\w.]+))\s+(\w+)\s*=\s*\d+`)
+
+type field struct {
+	Type     string `json:"type"` // fully-qualified for messages/enums, bare for scalars
+	Kind     string `json:"kind"` // "any" | "msg" | "scalar" (enums count as scalar: JSON strings)
+	Repeated bool   `json:"repeated,omitempty"`
+	Map      bool   `json:"map,omitempty"`
+}
+
+// parseFields reads the fields of one message from describe text, keyed by
+// their JSON (lowerCamel) name, which is what the request body uses.
+func parseFields(describe string) map[string]field {
+	fields := map[string]field{}
+	body := describe
+	if i := strings.Index(body, "{"); i >= 0 {
+		body = body[i+1:]
+	}
+	for _, line := range strings.Split(body, "\n") {
+		m := fieldLine.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		f := field{Repeated: strings.HasPrefix(m[1], "repeated"), Map: m[3] != ""}
+		f.Type = m[3]
+		if !f.Map {
+			f.Type = m[4]
+		}
+		switch {
+		case f.Type == "google.protobuf.Any":
+			f.Kind = "any"
+		case strings.Contains(f.Type, "."):
+			f.Kind = "msg" // enums are re-labelled scalar once described
+		default:
+			f.Kind = "scalar"
+		}
+		fields[jsonName(m[5])] = f
+	}
+	return fields
+}
+
+func jsonName(snake string) string {
+	parts := strings.Split(snake, "_")
+	for i := 1; i < len(parts); i++ {
+		if parts[i] != "" {
+			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+var schemaCache sync.Map // addr|tls|root -> map[string]map[string]field
+
+// handleSchema walks the message graph under ?type= through reflection and
+// returns every message's fields. The UI uses it to know which positions in a
+// body are google.protobuf.Any -- grpcurl's "Any JSON doesn't have '@type'"
+// never says which field, so the tool has to.
+func handleSchema(w http.ResponseWriter, r *http.Request) {
+	root := r.URL.Query().Get("type")
+	if root == "" {
+		writeJSON(w, map[string]any{"error": "type is required"})
+		return
+	}
+	addr, tls := addrOf(r), tlsOf(r)
+	key := fmt.Sprintf("%s|%v|%s", addr, tls, root)
+	if v, ok := schemaCache.Load(key); ok {
+		writeJSON(w, map[string]any{"root": root, "messages": v})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	messages := map[string]map[string]field{}
+	enums := map[string]bool{}
+	queue := []string{root}
+	seen := map[string]bool{root: true}
+	for len(queue) > 0 {
+		sym := queue[0]
+		queue = queue[1:]
+		d, _, err := describeSymbol(ctx, addr, tls, sym)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(d, " is an enum:") {
+			enums[sym] = true
+			continue
+		}
+		fields := parseFields(d)
+		messages[sym] = fields
+		for _, f := range fields {
+			if f.Kind == "msg" && !seen[f.Type] {
+				seen[f.Type] = true
+				queue = append(queue, f.Type)
+			}
+		}
+	}
+	for _, fields := range messages {
+		for name, f := range fields {
+			if enums[f.Type] {
+				f.Kind = "scalar"
+				fields[name] = f
+			}
+		}
+	}
+	schemaCache.Store(key, messages)
+	writeJSON(w, map[string]any{"root": root, "messages": messages})
 }

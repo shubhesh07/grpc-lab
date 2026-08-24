@@ -44,6 +44,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0c0e12;border:1px sol
 .anyrow{display:flex;gap:6px;align-items:center;margin:4px 0;font-size:12px}
 .anyrow .p{color:var(--warn);flex:none}
 details{margin-bottom:8px}summary{cursor:pointer;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.anyrow .p.bad{color:var(--err)}
+details.t{display:inline;margin:0}details.t>summary{display:inline;cursor:pointer;list-style:none;text-transform:none;font-size:inherit;letter-spacing:0;color:inherit}details.t[open]>summary .cl{display:none}details.t>summary .cnt{color:var(--dim);font-size:11px}details.t[open]>summary .cnt{display:none}details.t[open]>summary::after{content:""}.tb{padding-left:18px;border-left:1px solid var(--line);margin-left:3px}
 .k{color:#93c5fd}.s{color:#86efac}.n{color:#fbbf24}.b{color:#f0abfc}
 kbd{font-size:10px;color:var(--dim)}
 .types{color:var(--dim);font-size:11px}
@@ -87,7 +89,10 @@ kbd{font-size:10px;color:var(--dim)}
     <div class="row">
       <div class="tabs"><button class="on" data-t="out" onclick="tab('out')">Response</button><button data-t="desc" onclick="tab('desc')">Describe</button><button data-t="cmd" onclick="tab('cmd')">grpcurl</button></div>
       <span id="status" class="pill">idle</span>
-      <button class="small" onclick="copy($('out').textContent)">copy</button>
+      <button class="small" id="treebtn" onclick="treeMode=!treeMode;renderOut()">raw</button>
+      <button class="small" onclick="foldAll(false)">collapse</button>
+      <button class="small" onclick="foldAll(true)">expand</button>
+      <button class="small" onclick="copy(lastOut)">copy</button>
     </div>
     <pre id="out">—</pre>
     <pre id="desc" style="display:none">—</pre>
@@ -96,7 +101,7 @@ kbd{font-size:10px;color:var(--dim)}
 </main>
 <datalist id="typelist"></datalist>
 <script>
-let method = "", services = [], meta = {}, types = [];
+let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true;
 const $ = id => document.getElementById(id);
 const addr = () => $("addr").value.trim();
 const conn = () => "addr=" + encodeURIComponent(addr()) + "&tls=" + ($("tls").checked ? 1 : 0);
@@ -154,6 +159,7 @@ async function loadTemplate(replace){
   const r = await api("/api/template?" + conn() + "&method=" + encodeURIComponent(method));
   if (r.error){ setStatus(r.error, false); return; }
   $("desc").textContent = r.describe || "";
+  schema = null; api("/api/schema?" + conn() + "&type=" + encodeURIComponent(r.input)).then(sr => { schema = sr.messages || null; });
   if (replace || !$("body").value.trim() || confirm("Replace the current request body with the template?")){
     let t = r.template || "{}";
     if (r.clientStream) t += "\n" + t; // stdin takes many messages: show two so the shape is obvious
@@ -182,25 +188,47 @@ function parseMany(txt){
 }
 
 // ---- google.protobuf.Any ----
-// grpcurl's template renders every Any as {"@type": ".../google.protobuf.Empty", "value": {}}.
-// Find each one, let the developer pick the concrete type, and splice in that
-// type's template. The server's reflection resolves the type at invoke time.
-function scanAny(){
-  let objs; try { objs = parseMany($("body").value); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+// The schema (from reflection) says which positions are Any. Every such
+// position in the body is listed; one without "@type" is flagged, because
+// grpcurl's error for that case never names the field. Without a schema, fall
+// back to scanning for "@type" keys.
+function findAny(objs){
   const found = [];
-  const walk = (v, path) => {
-    if (Array.isArray(v)) v.forEach((x, i) => walk(x, path + "[" + i + "]"));
-    else if (v && typeof v === "object"){
-      if ("@type" in v) found.push({ path, type: String(v["@type"]).replace("type.googleapis.com/", "") });
-      Object.keys(v).forEach(k => k !== "@type" && walk(v[k], path ? path + "." + k : k));
+  const walkSchema = (v, type, path) => {
+    const fields = schema[type]; if (!fields || !v || typeof v !== "object") return;
+    for (const k of Object.keys(v)){
+      const f = fields[k]; if (!f) continue;
+      const each = (x, p) => {
+        if (f.kind === "any"){ const ok = x && typeof x === "object" && "@type" in x;
+          found.push({ path: p, type: ok ? String(x["@type"]).replace("type.googleapis.com/", "") : "", missing: !ok }); }
+        else if (f.kind === "msg") walkSchema(x, f.type, p);
+      };
+      const p = path ? path + "." + k : k;
+      if (f.map && v[k] && typeof v[k] === "object") Object.keys(v[k]).forEach(mk => each(v[k][mk], p + "." + mk));
+      else if (f.repeated && Array.isArray(v[k])) v[k].forEach((x, i) => each(x, p + "[" + i + "]"));
+      else each(v[k], p);
     }
   };
-  objs.forEach((o, i) => walk(o, objs.length > 1 ? "#" + i : ""));
-  if (!found.length){ $("anybox").innerHTML = '<div class="types">no google.protobuf.Any fields in body</div>'; return; }
+  const walkPlain = (v, path) => {
+    if (Array.isArray(v)) v.forEach((x, i) => walkPlain(x, path + "[" + i + "]"));
+    else if (v && typeof v === "object"){
+      if ("@type" in v) found.push({ path, type: String(v["@type"]).replace("type.googleapis.com/", ""), missing: false });
+      Object.keys(v).forEach(k => k !== "@type" && walkPlain(v[k], path ? path + "." + k : k));
+    }
+  };
+  objs.forEach((o, i) => { const pre = objs.length > 1 ? "#" + i : "";
+    schema && meta.input && schema[meta.input] ? walkSchema(o, meta.input, pre) : walkPlain(o, pre); });
+  return found;
+}
+function scanAny(){
+  let objs; try { objs = parseMany($("body").value); } catch(e){ setStatus("invalid JSON: " + e.message, false); return []; }
+  const found = findAny(objs);
+  if (!found.length){ $("anybox").innerHTML = '<div class="types">no google.protobuf.Any fields in body' + (schema ? "" : " (schema not loaded; scanned for @type)") + '</div>'; return found; }
   $("anybox").innerHTML = found.map((f, i) =>
-    '<div class="anyrow"><span class="p">' + esc(f.path || "$") + '</span>' +
-    '<input list="typelist" class="grow" id="any' + i + '" value="' + esc(f.type) + '" placeholder="pkg.Message">' +
+    '<div class="anyrow"><span class="p' + (f.missing ? ' bad' : '') + '" title="' + (f.missing ? 'missing @type -- grpcurl will reject this' : 'google.protobuf.Any') + '">' + esc(f.path || "$") + '</span>' +
+    '<input list="typelist" class="grow" id="any' + i + '" value="' + esc(f.type) + '" placeholder="pkg.Message (or delete the field)">' +
     '<button class="small" onclick="fillAny(' + i + ',' + JSON.stringify(f.path) + ')">fill</button></div>').join("");
+  return found;
 }
 async function fillAny(i, path){
   const t = $("any" + i).value.trim(); if (!t) return;
@@ -229,12 +257,15 @@ function substitute(txt){
 async function invoke(){
   if(!method){ setStatus("pick a method first", false); return; }
   const payload = substitute($("body").value);
-  try { parseMany(payload); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+  let objs; try { objs = parseMany(payload); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+  const missing = findAny(objs).filter(f => f.missing);
+  if ($("anybox").innerHTML) scanAny();
+  if (missing.length){ setStatus("Any without @type: " + missing.map(f => f.path).join(", ") + " -- fill it or delete the field", false); return; }
   setStatus("calling…", null); $("out").textContent = ""; tab("out");
   const r = await api("/api/invoke", { method: "POST", headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ addr: addr(), method, payload, token: $("token").value.trim(), headers: $("headers").value,
       tls: $("tls").checked, emitDefaults: $("emit").checked, verbose: $("verbose").checked }) });
-  $("out").innerHTML = hl(r.output || r.error || "(no output)");
+  lastOut = r.output || r.error || "(no output)"; renderOut();
   $("cmd").textContent = r.command || "";
   setStatus((r.ok ? "ok" : "error" + codeName(r.output)) + " · " + (r.ms||0) + "ms", r.ok);
   loadHistory();
@@ -279,6 +310,23 @@ function tab(t){ ["out","desc","cmd"].forEach(x => { $(x).style.display = x === 
 function copy(t){ navigator.clipboard.writeText(t).then(() => setStatus("copied", true)); }
 function setStatus(t, ok){ const s = $("status"); s.textContent = t; s.className = "pill" + (ok === true ? " ok" : ok === false ? " err" : ""); }
 function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+// Response as a collapsible tree when it parses as JSON (one or more
+// messages), otherwise the raw text. Click a key to fold that object.
+function renderOut(){
+  $("treebtn").textContent = treeMode ? "raw" : "tree";
+  let objs = null; if (treeMode) try { objs = parseMany(lastOut); } catch(e){}
+  $("out").innerHTML = objs && objs.length ? objs.map(tree).join('<hr style="border:0;border-top:1px dashed var(--line)">') : hl(lastOut);
+}
+function tree(v, depth){
+  depth = depth || 0;
+  if (v === null || typeof v !== "object") return hl(JSON.stringify(v));
+  const arr = Array.isArray(v), keys = Object.keys(v), o = arr ? "[" : "{", c = arr ? "]" : "}";
+  if (!keys.length) return o + c;
+  const open = depth < 2 ? " open" : "";
+  return '<details class="t"' + open + '><summary>' + o + '<span class="cnt"> ' + keys.length + (arr ? " items" : " keys") + ' </span><span class="cl">' + c + '</span></summary><div class="tb">' +
+    keys.map(k => '<div>' + (arr ? '' : '<span class="k">"' + esc(k) + '"</span>: ') + tree(v[k], depth + 1) + '</div>').join("") + '</div>' + c + '</details>';
+}
+function foldAll(open){ document.querySelectorAll("#out details").forEach(d => d.open = open); }
 // Cheap JSON colouring on the escaped text; grpcurl already pretty-prints.
 function hl(s){ return esc(s).replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b/g,
   (m, str, colon, kw) => str ? (colon ? '<span class="k">' + str + '</span>' + colon : '<span class="s">' + str + '</span>') : kw ? '<span class="b">' + kw + '</span>' : '<span class="n">' + m + '</span>'); }

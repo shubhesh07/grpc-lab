@@ -41,6 +41,12 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   splices in that type's template with the right `@type` URL.
 - Streaming: server-stream responses print in order; client/bidi streams take
   several JSON objects one after another in the editor.
+- **Any lint** — before every call the body is checked against the request
+  schema (walked via reflection); any `Any`-typed position without `@type`
+  blocks the call with its exact path (grpcurl's own error never says which
+  field). Delete the field or fill it from the picker.
+- Response renders as a **collapsible JSON tree** (click `{`/`[` to fold,
+  collapse/expand all, `raw` for plain text).
 - `Describe` tab shows the proto text of the method, request and response.
 - `grpcurl` tab gives the exact pasteable command for the last call.
 - Metadata headers (`k: v` lines), bearer token, TLS (`-insecure`),

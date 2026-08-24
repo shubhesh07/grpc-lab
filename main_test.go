@@ -47,3 +47,27 @@ func TestParseHeadersAndQuote(t *testing.T) {
 		t.Fatalf("bad quote: %s", q)
 	}
 }
+
+func TestParseFields(t *testing.T) {
+	d := `cart.v1.Cart is a message:
+message Cart {
+  string id = 1;
+  .cart.v1.CartType cart_type = 2;
+  map<string, .cart.v1.LineItem> items = 21;
+  repeated .cart.v1.Cart child_carts = 22;
+  .google.protobuf.Any seller_info = 54;
+  map<string, .google.protobuf.Any> shared_contexts = 2;
+}`
+	got := parseFields(d)
+	want := map[string]field{
+		"id":             {Type: "string", Kind: "scalar"},
+		"cartType":       {Type: "cart.v1.CartType", Kind: "msg"},
+		"items":          {Type: "cart.v1.LineItem", Kind: "msg", Map: true},
+		"childCarts":     {Type: "cart.v1.Cart", Kind: "msg", Repeated: true},
+		"sellerInfo":     {Type: "google.protobuf.Any", Kind: "any"},
+		"sharedContexts": {Type: "google.protobuf.Any", Kind: "any", Map: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}

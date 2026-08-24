@@ -586,7 +586,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	appendHistory(historyEntry{At: started.Format(time.RFC3339), Addr: req.Addr, Method: req.Method, Payload: req.Payload, OK: err == nil, Ms: ms})
 
 	// Pasteable equivalent, with the body inline instead of on stdin.
-	cmdArgs := append([]string{"grpcurl"}, args[:len(args)-4]...)
+	cmdArgs := append(append([]string{"grpcurl"}, protosetArgs()...), args[:len(args)-4]...)
 	cmdArgs = append(cmdArgs, "-d", req.Payload, req.Addr, req.Method)
 	writeJSON(w, map[string]any{
 		"output":  out,

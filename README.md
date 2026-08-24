@@ -5,11 +5,46 @@
 A browser UI for exercising gRPC services during development. Point it at a
 running server, pick a method, edit JSON, invoke.
 
+![grpc-lab](docs/screenshot.png)
+
+## Install
+
+Pick one:
+
+**Go** (needs Go 1.25+)
+
 ```sh
-go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest   # once
-go run . -addr localhost:8086
-# open http://127.0.0.1:8090
+go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
+go install github.com/shubhesh07/grpc-lab@latest
 ```
+
+Both land in `$(go env GOPATH)/bin` (usually `~/go/bin`). If `grpc-lab` is
+"command not found", add that directory to your PATH:
+
+```sh
+echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.zshrc && source ~/.zshrc
+```
+
+**Prebuilt binary** — macOS / Linux / Windows from the
+[latest release](https://github.com/shubhesh07/grpc-lab/releases/latest).
+Unpack and put `grpc-lab` on your PATH; `grpcurl` is still needed on PATH.
+
+**Docker** — grpcurl is bundled, nothing else to install:
+
+```sh
+docker run --rm -p 8090:8090 -v "$PWD/payloads:/data/payloads" \
+  ghcr.io/shubhesh07/grpc-lab -addr host.docker.internal:8082
+```
+
+## Run
+
+```sh
+grpc-lab -addr localhost:8082      # your gRPC server (reflection must be on)
+```
+
+Open **http://127.0.0.1:8090**. Saved request bodies go to `./payloads` in
+the directory you started from (change with `-payloads`). `grpc-lab -h` lists
+all flags.
 
 ## Why this exists
 

@@ -61,6 +61,8 @@ details.t:not([open])>summary .cl{display:inline}details.t>summary .cl{display:n
 .leaf input.iv{padding:1px 4px;font:inherit;min-width:120px}
 .hintline{color:var(--dim);font-size:11px;margin:4px 0}
 .tog{color:var(--dim);opacity:0;cursor:pointer;margin-right:6px;font-size:11px}.leaf:hover>.tog,summary:hover>.tog,.te:hover>.tog{opacity:.6}.tog:hover,.tog.on{opacity:1;color:var(--warn)}.off,.k.off{color:var(--dim);text-decoration:line-through;opacity:.7}
+#body{height:calc(100vh - 360px);min-height:160px;font-size:13px;line-height:1.45;tab-size:2}
+#lint.bad{color:var(--err)}#lint.good{color:var(--ok)}
 #reqtree{border:1px solid var(--line);border-radius:6px;background:#0c0e12;padding:8px;height:calc(100vh - 330px);min-height:160px;overflow:auto}
 .k{color:#7dd3fc}.s{color:#86efac}.n{color:#fb923c}.b{color:#f0abfc}
 kbd{font-size:10px;color:var(--dim)}
@@ -89,14 +91,18 @@ kbd{font-size:10px;color:var(--dim)}
     </div>
     <div class="row">
       <button onclick="loadTemplate(true)" title="regenerate request skeleton from reflection">Template</button>
+      <button id="reqview" onclick="toggleReq()" title="switch between text editor and foldable tree">Tree</button>
+      <button id="fmtbtn" onclick="format()" title="pretty-print (comments are kept as-is)">Format</button>
+      <span id="reqfold" style="display:none"><button class="small" onclick="foldReq(false)">collapse</button> <button class="small" onclick="foldReq(true)">expand</button></span>
       <button onclick="save()">Save…</button>
       <button onclick="pasteCurl()" title="paste a grpcurl command: target, headers, body and method are filled in">Paste grpcurl</button>
       <button class="primary" onclick="invoke()">Invoke <kbd>⌃⏎</kbd></button>
       <label class="chk"><input type="checkbox" id="emit">emit defaults</label>
       <label class="chk"><input type="checkbox" id="verbose">verbose</label>
     </div>
-    <textarea id="body" spellcheck="false" style="display:none"></textarea>
-    <div id="reqtree"></div>
+    <textarea id="body" spellcheck="false" placeholder="{}"></textarea>
+    <div id="lint" class="hintline"></div>
+    <div id="reqtree" style="display:none"></div>
     <div id="anybox"></div>
     <details><summary>Metadata headers</summary>
       <textarea id="headers" class="aux" spellcheck="false" placeholder="x-tenant-id: 1&#10;x-request-id: abc"></textarea></details>
@@ -119,7 +125,7 @@ kbd{font-size:10px;color:var(--dim)}
 </main>
 <datalist id="typelist"></datalist>
 <script>
-let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true, reqTree = true;
+let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true, reqTree = false;
 // Request tabs: each is an independent workspace (method + body); the active
 // one is what the editor shows. Persisted as one blob.
 let tabs = [], cur = 0, selSegs = null, undoStack = [];
@@ -137,9 +143,27 @@ const api = async (url, opt) => (await fetch(url, opt)).json();
 ["emit","verbose"].forEach(k => { $(k).checked = ls.get(k) === "1"; $(k).onchange = () => ls.set(k, $(k).checked ? "1" : "0"); });
 $("tls").checked = ls.get("tls") === "1"; $("tls").onchange = () => { ls.set("tls", $("tls").checked ? "1" : "0"); loadMethods(true); };
 let anyTimer = 0;
-$("body").oninput = () => { saveTab(); clearTimeout(anyTimer); anyTimer = setTimeout(() => scanAny(true), 400); };
+$("body").oninput = () => { saveTab(); lint(); clearTimeout(anyTimer); anyTimer = setTimeout(() => scanAny(true), 400); };
 // Tab indents instead of leaving the editor.
-$("body").addEventListener("keydown", e => { if (e.key === "Tab"){ e.preventDefault(); const t = e.target, a = t.selectionStart; t.value = t.value.slice(0, a) + "  " + t.value.slice(t.selectionEnd); t.selectionStart = t.selectionEnd = a + 2; } });
+$("body").addEventListener("keydown", e => {
+  const t = e.target, a = t.selectionStart;
+  if (e.key === "Tab"){ e.preventDefault(); t.value = t.value.slice(0, a) + "  " + t.value.slice(t.selectionEnd); t.selectionStart = t.selectionEnd = a + 2; t.dispatchEvent(new Event("input")); }
+  else if (e.key === "Enter" && !e.ctrlKey && !e.metaKey){
+    e.preventDefault();
+    const line = t.value.slice(0, a).split("\n").pop(), ind = /^\s*/.exec(line)[0], prev = t.value[a - 1], next = t.value[a];
+    const open = prev === "{" || prev === "[", close = open && (next === "}" || next === "]");
+    const ins = "\n" + ind + (open ? "  " : "") + (close ? "\n" + ind : "");
+    t.value = t.value.slice(0, a) + ins + t.value.slice(t.selectionEnd);
+    t.selectionStart = t.selectionEnd = a + 1 + ind.length + (open ? 2 : 0);
+    t.dispatchEvent(new Event("input"));
+  }
+});
+function lint(){
+  const txt = $("body").value, el = $("lint");
+  if (!txt.trim()){ el.textContent = ""; el.className = "hintline"; return; }
+  try { const n = parseMany(txt).length; el.textContent = "valid JSON" + (n > 1 ? " \u00b7 " + n + " messages" : ""); el.className = "hintline good"; }
+  catch(e){ const m = /position (\d+)/.exec(e.message); const ln = m ? stripComments(txt).slice(0, +m[1]).split("\n").length : null; el.textContent = "invalid JSON: " + e.message + (ln ? " (around line " + ln + ")" : ""); el.className = "hintline bad"; }
+}
 
 async function loadMethods(refresh){
   $("methods").textContent = "loading…"; types = [];
@@ -181,7 +205,7 @@ async function pick(name){
   await loadTemplate(true);
   if (method !== name) return;              // user already clicked elsewhere
   if (saved) $("body").value = saved;
-  saveTab(); renderReq();
+  saveTab(); lint(); renderReq();
 }
 
 async function loadTemplate(replace){
@@ -195,7 +219,7 @@ async function loadTemplate(replace){
   if (replace || !$("body").value.trim() || confirm("Replace the current request body with the template?")){
     let t = r.template || "{}";
     if (r.clientStream) t += "\n" + t; // stdin takes many messages: show two so the shape is obvious
-    $("body").value = t; saveTab(); $("anybox").innerHTML = ""; renderReq();
+    $("body").value = t; saveTab(); $("anybox").innerHTML = ""; lint(); renderReq();
   }
 }
 
@@ -502,19 +526,26 @@ function tree(v, key, last, segs, editable){
     keys.map((k, i) => tree(v[k], arr ? "" : k, i === keys.length - 1, segs.concat(arr ? i : k), editable)).join("") +
     '</div><div class="te">' + c + comma + '</div></details></div>';
 }
-function foldAll(open){ document.querySelectorAll("#out details, #reqtree details").forEach(d => d.open = open); }
+function foldAll(open){ document.querySelectorAll("#out details").forEach(d => d.open = open); }
 
 // Request tree: same renderer over the editor's JSON; edits round-trip.
-// The tree IS the request editor. #body (hidden) holds the JSON text as the
-// source of truth; every edit re-renders from it.
+// #body is the source of truth; the tree renders from it and writes back.
+function toggleReq(){
+  reqTree = !reqTree; $("reqview").textContent = reqTree ? "Text" : "Tree";
+  $("body").style.display = reqTree ? "none" : ""; $("lint").style.display = reqTree ? "none" : ""; $("fmtbtn").style.display = reqTree ? "none" : "";
+  $("reqtree").style.display = reqTree ? "block" : "none"; $("reqfold").style.display = reqTree ? "" : "none";
+  if (reqTree) renderReq(); else lint();
+}
+function foldReq(open){ document.querySelectorAll("#reqtree details").forEach(d => d.open = open); }
 function renderReq(){
+  if (!reqTree) return;
   let objs; try { objs = parseMany($("body").value || "{}"); } catch(e){ $("reqtree").innerHTML = '<span style="color:var(--err)">' + esc("invalid JSON: " + e.message) + '</span> <button class="small" onclick="editNode([0])">fix</button>'; return; }
   if (!objs.length) objs = [{}];
   $("reqtree").innerHTML = objs.map((o, i) => tree(o, "", true, [i], true)).join('<hr style="border:0;border-top:1px dashed var(--line)">') +
     (meta.clientStream ? '<div class="hintline">client stream: each message is sent in order <button class="small" onclick="addMessage()">+ message</button></div>' : '') +
-    '<div class="hintline">click a row + Delete removes it (\u2318Z undo) \u00b7 double-click a value to edit \u00b7 \u270E edits an object as JSON \u00b7 // disables a key</div>';
+    '<div class="hintline">click a row + Delete removes it (\u2318Z undo) \u00b7 double-click a value to edit \u00b7 \u270E edits an object as JSON \u00b7 // disables a key \u00b7 Text for the plain editor</div>';
 }
-function setBody(objs){ pushUndo(); $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); renderReq(); scanAny(true); }
+function setBody(objs){ pushUndo(); $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); lint(); renderReq(); scanAny(true); }
 function pushUndo(){ undoStack.push($("body").value); if (undoStack.length > 30) undoStack.shift(); }
 function undo(){ if (!undoStack.length){ setStatus("nothing to undo", false); return; } $("body").value = undoStack.pop(); saveTab(); renderReq(); scanAny(true); setStatus("undone", true); }
 // deleteNode removes a key or array element; the root resets to {}.

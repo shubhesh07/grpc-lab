@@ -122,6 +122,11 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   splices in that type's template with the right `@type` URL.
 - Streaming: server-stream responses print in order; client/bidi streams take
   several JSON objects one after another in the editor.
+- **Type sources** — a server can only reflect the types it links in, so an
+  `Any` packed with another service's message comes back as `@error … is not
+  recognized` plus raw bytes. Add that service's `host:port` under *Type
+  sources* in the sidebar: grpc-lab pulls its descriptors once (`protosets/`)
+  and passes them to every call alongside the target's reflection.
 - **Any lint** — before every call (the body is also auto-formatted) the body is checked against the request
   schema (walked via reflection); any `Any`-typed position without `@type`
   blocks the call with its exact path (grpcurl's own error never says which
@@ -159,6 +164,7 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 | `-port` | `8090` | port for this UI |
 | `-payloads` | `payloads` | directory of saved request bodies |
 | `-timeout` | `30s` | per-call timeout |
+| `-protosets` | `protosets` | directory of descriptor sets pulled from type sources |
 | `-bind` | `127.0.0.1` | interface to listen on (`0.0.0.0` inside Docker) |
 
 ## Limits

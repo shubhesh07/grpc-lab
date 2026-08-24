@@ -38,6 +38,7 @@ var (
 	bindHost    = flag.String("bind", "127.0.0.1", "interface for this UI; 0.0.0.0 only inside a container")
 	payloadDir  = flag.String("payloads", "payloads", "directory of saved request bodies")
 	callTimeout = flag.Duration("timeout", 30*time.Second, "per-call timeout")
+	protosetDir = flag.String("protosets", "protosets", "directory of extra .protoset files (type sources) added to every call")
 )
 
 // safeName keeps saved payloads inside payloadDir. Names arrive from the
@@ -67,6 +68,9 @@ func main() {
 	if err := os.MkdirAll(*payloadDir, 0o755); err != nil {
 		log.Fatal(err)
 	}
+	if err := os.MkdirAll(*protosetDir, 0o755); err != nil {
+		log.Fatal(err)
+	}
 
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/api/methods", handleMethods)
@@ -77,6 +81,7 @@ func main() {
 	http.HandleFunc("/api/invoke", handleInvoke)
 	http.HandleFunc("/api/payloads", handlePayloads)
 	http.HandleFunc("/api/history", handleHistory)
+	http.HandleFunc("/api/typesources", handleTypeSources)
 
 	addr := fmt.Sprintf("%s:%d", *bindHost, *uiPort)
 	log.Printf("grpc-lab  http://%s   target=%s   payloads=%s", addr, *defaultAddr, *payloadDir)
@@ -88,12 +93,82 @@ func main() {
 // a failure (status code, message, details) to stderr, so discarding it on a
 // non-zero exit would throw away exactly what the developer needs to see.
 func grpcurlRun(ctx context.Context, stdin string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "grpcurl", args...)
+	cmd := exec.CommandContext(ctx, "grpcurl", append(protosetArgs(), args...)...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// protosetArgs adds every saved type source to a grpcurl invocation. A server
+// can only reflect the types it links in; an Any packed with a type from
+// another service (say CustomerInfo from customer-service) comes back as
+// @error/@value unless grpcurl also has that service's descriptors.
+// -use-reflection keeps the target's own reflection active alongside them.
+func protosetArgs() []string {
+	files, _ := filepath.Glob(filepath.Join(*protosetDir, "*.protoset"))
+	if len(files) == 0 {
+		return nil
+	}
+	args := []string{"-use-reflection"}
+	for _, f := range files {
+		args = append(args, "-protoset", f)
+	}
+	return args
+}
+
+// handleTypeSources lists (GET), fetches (POST {addr,tls}) or removes (DELETE
+// ?name=) descriptor sets pulled from other servers' reflection.
+func handleTypeSources(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		files, _ := filepath.Glob(filepath.Join(*protosetDir, "*.protoset"))
+		names := []string{}
+		for _, f := range files {
+			names = append(names, strings.TrimSuffix(filepath.Base(f), ".protoset"))
+		}
+		writeJSON(w, map[string]any{"sources": names})
+	case http.MethodPost:
+		var req struct {
+			Addr string `json:"addr"`
+			TLS  bool   `json:"tls"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Addr == "" {
+			writeJSON(w, map[string]any{"error": "addr is required"})
+			return
+		}
+		name := strings.NewReplacer(":", "_", "/", "_").Replace(req.Addr)
+		if !safeName.MatchString(name) {
+			writeJSON(w, map[string]any{"error": "bad address"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		out := filepath.Join(*protosetDir, name+".protoset")
+		// Plain exec, not grpcurlRun: the fetch must not depend on the other sources.
+		cmd := exec.CommandContext(ctx, "grpcurl", append(connArgs(req.TLS), "-protoset-out", out, req.Addr, "describe")...)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			writeJSON(w, map[string]any{"error": strings.TrimSpace(string(b))})
+			return
+		}
+		typeCache.Range(func(k, _ any) bool { typeCache.Delete(k); return true })
+		writeJSON(w, map[string]any{"added": name})
+	case http.MethodDelete:
+		name := r.URL.Query().Get("name")
+		if !safeName.MatchString(name) {
+			writeJSON(w, map[string]any{"error": "bad name"})
+			return
+		}
+		if err := os.Remove(filepath.Join(*protosetDir, name+".protoset")); err != nil {
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		typeCache.Range(func(k, _ any) bool { typeCache.Delete(k); return true })
+		writeJSON(w, map[string]any{"deleted": name})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

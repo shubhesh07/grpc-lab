@@ -79,6 +79,7 @@ kbd{font-size:10px;color:var(--dim)}
     <input id="filter" placeholder="filter methods…" style="width:100%" oninput="renderMethods()">
     <div id="methods" style="margin-top:6px">loading…</div>
     <h3>Saved payloads</h3><div id="saved"></div>
+    <h3>Type sources <button class="small" onclick="addTypeSource()" title="pull descriptors from another server so its types decode inside Any">+</button></h3><div id="typesources"></div>
     <h3>History <button class="small" onclick="clearHistory()">clear</button></h3><div id="history"></div>
   </section>
   <section>
@@ -326,8 +327,10 @@ async function invoke(){
     body: JSON.stringify({ addr: addr(), method, payload, token: $("token").value.trim(), headers: $("headers").value,
       tls: $("tls").checked, emitDefaults: $("emit").checked, verbose: $("verbose").checked }) });
   lastOut = r.output || r.error || "(no output)"; renderOut();
+  const un = /"@error":\s*"([\w.]+) is not recognized/.exec(lastOut);
+  if (un) setStatus("response has an Any of " + un[1] + " the target cannot reflect \u2014 add its server under Type sources", false);
   $("cmd").textContent = r.command || "";
-  setStatus((r.ok ? "ok" : "error" + codeName(r.output)) + " · " + (r.ms||0) + "ms", r.ok);
+  if (!un) setStatus((r.ok ? "ok" : "error" + codeName(r.output)) + " · " + (r.ms||0) + "ms", r.ok);
   loadHistory();
 }
 const CODES = ["OK","CANCELLED","UNKNOWN","INVALID_ARGUMENT","DEADLINE_EXCEEDED","NOT_FOUND","ALREADY_EXISTS","PERMISSION_DENIED","RESOURCE_EXHAUSTED","FAILED_PRECONDITION","ABORTED","OUT_OF_RANGE","UNIMPLEMENTED","INTERNAL","UNAVAILABLE","DATA_LOSS","UNAUTHENTICATED"];
@@ -362,6 +365,21 @@ async function loadHistory(){
     if (!services.flatMap(s => s.methods).some(m => m.name === h.method)){ setStatus("method not on this target: " + h.method, false); return; }
     await pick(h.method); $("body").value = h.payload; format();
   });
+}
+// Type sources: descriptor sets from other servers, so an Any carrying e.g.
+// customer-service's CustomerInfo decodes even when the target can't reflect it.
+async function loadTypeSources(){
+  const r = await api("/api/typesources");
+  $("typesources").innerHTML = (r.sources||[]).map(n => '<div class="saved" data-n="' + esc(n) + '"><span title="descriptors from ' + esc(n.replace(/_/g, ":")) + '">' + esc(n.replace(/_/g, ":")) + '</span><span class="x" title="remove">×</span></div>').join("") ||
+    '<span style="color:var(--dim)" title="if a response shows @error ... is not recognized, add that type\'s server here">none</span>';
+  document.querySelectorAll("#typesources .x").forEach(x => x.onclick = async () => { await fetch("/api/typesources?name=" + encodeURIComponent(x.parentNode.dataset.n), { method: "DELETE" }); loadTypeSources(); loadTypes(true); });
+}
+async function addTypeSource(){
+  const a = prompt("host:port of the server whose types should decode (uses the TLS checkbox):"); if (!a) return;
+  setStatus("fetching descriptors from " + a + "\u2026", null);
+  const r = await api("/api/typesources", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ addr: a.trim(), tls: $("tls").checked }) });
+  if (r.error){ setStatus(r.error, false); return; }
+  setStatus("added type source " + a, true); loadTypeSources(); loadTypes(true);
 }
 async function clearHistory(){ await fetch("/api/history", { method: "DELETE" }); loadHistory(); }
 
@@ -546,5 +564,5 @@ document.addEventListener("keydown", e => {
 
 renderTabs();
 loadMethods().then(() => { const t = tabs[cur]; if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) pick(t.method); else { $("body").value = t.body; renderReq(); } });
-loadSaved(); loadHistory();
+loadSaved(); loadHistory(); loadTypeSources();
 </script></body></html>`

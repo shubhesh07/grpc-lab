@@ -48,6 +48,10 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 - Request and response both render as a **collapsible JSON tree** (arrows,
   guide lines, collapse/expand all). `Tree` on the request folds the body;
   double-click a value to edit it in place. `raw` shows the response as text.
+- **Request tabs** — `+` opens an independent workspace (method + body);
+  tabs persist across reloads.
+- **Paste grpcurl** — paste a full `grpcurl … host:port svc/Method` command;
+  target, TLS flag, headers, bearer token, body and method are filled in.
 - Tab indents in the editor; `⌃⏎` invokes.
 - `Describe` tab shows the proto text of the method, request and response.
 - `grpcurl` tab gives the exact pasteable command for the last call.

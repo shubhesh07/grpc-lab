@@ -4,6 +4,7 @@ package main
 // step, no dependencies. {{ADDR}} is substituted with the default target.
 const indexHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>grpc-lab</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1115'/%3E%3Ctext x='16' y='22' font-size='17' font-family='Menlo,monospace' font-weight='700' text-anchor='middle' fill='%235eead4'%3Eg%3C/text%3E%3C/svg%3E">
 <style>
 :root{--bg:#0f1115;--panel:#161a21;--line:#252b36;--fg:#d7dce5;--dim:#8b95a7;--acc:#5eead4;--err:#f87171;--ok:#4ade80;--warn:#fbbf24}
 *{box-sizing:border-box}
@@ -40,6 +41,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0c0e12;border:1px sol
 .hist{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hist:hover{background:#1b212b;color:var(--fg)}
 .hist.ok::before{content:"● ";color:var(--ok)}.hist.err::before{content:"● ";color:var(--err)}
+.rtabs{display:flex;gap:4px;align-items:center;margin-bottom:8px;flex-wrap:wrap}.rtab{padding:3px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer;color:var(--dim);font-size:12px;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rtab.on{color:var(--acc);border-color:var(--acc);background:#0c0e12}.rtab .x{margin-left:6px;opacity:.5}.rtab .x:hover{opacity:1;color:var(--err)}
 .tabs{display:flex;gap:2px}.tabs button{border-radius:6px 6px 0 0;border-bottom:0}.tabs button.on{background:#0c0e12;color:var(--acc)}
 .anyrow{display:flex;gap:6px;align-items:center;margin:4px 0;font-size:12px}
 .anyrow .p{color:var(--warn);flex:none}
@@ -71,6 +73,7 @@ kbd{font-size:10px;color:var(--dim)}
     <h3>History <button class="small" onclick="clearHistory()">clear</button></h3><div id="history"></div>
   </section>
   <section>
+    <div class="rtabs" id="rtabs"></div>
     <div class="row">
       <span id="sel" class="pill">no method selected</span>
     </div>
@@ -80,6 +83,7 @@ kbd{font-size:10px;color:var(--dim)}
       <button id="reqview" onclick="toggleReq()" title="fold the request; double-click a value to edit it">Tree</button>
       <button onclick="scanAny()" title="find google.protobuf.Any fields and fill them with a concrete type">Any…</button>
       <button onclick="save()">Save…</button>
+      <button onclick="pasteCurl()" title="paste a grpcurl command: target, headers, body and method are filled in">Paste grpcurl</button>
       <button class="primary" onclick="invoke()">Invoke <kbd>⌃⏎</kbd></button>
       <label class="chk"><input type="checkbox" id="emit">emit defaults</label>
       <label class="chk"><input type="checkbox" id="verbose">verbose</label>
@@ -109,18 +113,23 @@ kbd{font-size:10px;color:var(--dim)}
 <datalist id="typelist"></datalist>
 <script>
 let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true, reqTree = false;
+// Request tabs: each is an independent workspace (method + body); the active
+// one is what the editor shows. Persisted as one blob.
+let tabs = [], cur = 0;
+try { const t = JSON.parse(ls.get("tabs") || "null"); if (t && t.tabs && t.tabs.length){ tabs = t.tabs; cur = Math.min(t.cur || 0, tabs.length - 1); } } catch(e){}
+if (!tabs.length) tabs = [{ method: "", body: "" }];
 const $ = id => document.getElementById(id);
+const ls = { get: k => { try { return localStorage.getItem("grpclab:" + k) || ""; } catch(e){ return ""; } },
+             set: (k, v) => { try { localStorage.setItem("grpclab:" + k, v); } catch(e){} } };
 const addr = () => $("addr").value.trim();
 const conn = () => "addr=" + encodeURIComponent(addr()) + "&tls=" + ($("tls").checked ? 1 : 0);
 const api = async (url, opt) => (await fetch(url, opt)).json();
 
 // ---- persistence: small conveniences survive a reload ----
-const ls = { get: k => { try { return localStorage.getItem("grpclab:" + k) || ""; } catch(e){ return ""; } },
-             set: (k, v) => { try { localStorage.setItem("grpclab:" + k, v); } catch(e){} } };
 ["addr","token","headers","vars"].forEach(k => { if (ls.get(k)) $(k).value = ls.get(k); $(k).oninput = () => ls.set(k, $(k).value); });
 ["emit","verbose"].forEach(k => { $(k).checked = ls.get(k) === "1"; $(k).onchange = () => ls.set(k, $(k).checked ? "1" : "0"); });
 $("tls").checked = ls.get("tls") === "1"; $("tls").onchange = () => { ls.set("tls", $("tls").checked ? "1" : "0"); loadMethods(true); };
-$("body").oninput = () => { if (method) ls.set("body:" + method, $("body").value); };
+$("body").oninput = saveTab;
 // Tab indents instead of leaving the editor.
 $("body").addEventListener("keydown", e => { if (e.key === "Tab"){ e.preventDefault(); const t = e.target, a = t.selectionStart; t.value = t.value.slice(0, a) + "  " + t.value.slice(t.selectionEnd); t.selectionStart = t.selectionEnd = a + 2; } });
 
@@ -159,12 +168,12 @@ async function pick(name){
   meta = services.flatMap(s => s.methods).find(m => m.name === name) || {};
   renderMethods();
   $("sel").innerHTML = esc(name) + ' <span style="color:var(--dim)">' + esc(meta.input) + ' → ' + esc(meta.output) + '</span>';
-  const saved = ls.get("body:" + name);
+  const saved = tabs[cur].method === name ? tabs[cur].body : "";
   $("body").value = ""; $("anybox").innerHTML = ""; $("desc").textContent = "";
   await loadTemplate(true);
   if (method !== name) return;              // user already clicked elsewhere
-  if (saved){ $("body").value = saved; ls.set("body:" + name, saved); }
-  if (reqTree) renderReq();
+  if (saved) $("body").value = saved;
+  saveTab(); if (reqTree) renderReq();
 }
 
 async function loadTemplate(replace){
@@ -178,14 +187,14 @@ async function loadTemplate(replace){
   if (replace || !$("body").value.trim() || confirm("Replace the current request body with the template?")){
     let t = r.template || "{}";
     if (r.clientStream) t += "\n" + t; // stdin takes many messages: show two so the shape is obvious
-    $("body").value = t; ls.set("body:" + name, t); $("anybox").innerHTML = "";
+    $("body").value = t; saveTab(); $("anybox").innerHTML = "";
     if (reqTree) renderReq();
   }
 }
 
 function format(){
   const txt = $("body").value;
-  try { $("body").value = parseMany(txt).map(o => JSON.stringify(o, null, 2)).join("\n"); if (method) ls.set("body:" + method, $("body").value); }
+  try { $("body").value = parseMany(txt).map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); }
   catch(e){ setStatus("invalid JSON: " + e.message, false); }
   if (reqTree) renderReq();
 }
@@ -256,7 +265,7 @@ async function fillAny(i, segs){
   let tpl = {}; try { tpl = JSON.parse(r.template || "{}"); } catch(e){}
   const objs = parseMany($("body").value);
   setPath(objs, segs, Object.assign({ "@type": "type.googleapis.com/" + t }, tpl));
-  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value); if (reqTree) renderReq();
+  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); if (reqTree) renderReq();
   setStatus("filled " + showPath(segs) + " with " + t, true); scanAny();
 }
 // segs[0] is the message index (client streams carry several); the rest walk into it.
@@ -326,6 +335,77 @@ async function loadHistory(){
 }
 async function clearHistory(){ await fetch("/api/history", { method: "DELETE" }); loadHistory(); }
 
+// ---- request tabs ----
+function saveTab(){ tabs[cur] = { method, body: $("body").value }; ls.set("tabs", JSON.stringify({ tabs, cur })); renderTabs(); }
+function renderTabs(){
+  $("rtabs").innerHTML = tabs.map((t, i) => '<span class="rtab' + (i === cur ? " on" : "") + '" data-i="' + i + '">' + esc(t.method ? t.method.split(".").pop() : "new") +
+    (tabs.length > 1 ? '<span class="x" title="close">×</span>' : '') + '</span>').join("") + '<button class="small" onclick="newTab()" title="new request tab">+</button>';
+  document.querySelectorAll(".rtab").forEach(el => {
+    el.onclick = () => switchTab(+el.dataset.i);
+    const x = el.querySelector(".x"); if (x) x.onclick = e => { e.stopPropagation(); closeTab(+el.dataset.i); };
+  });
+}
+async function switchTab(i){
+  if (i === cur) return;
+  tabs[cur] = { method, body: $("body").value }; cur = i;
+  const t = tabs[cur]; method = ""; $("anybox").innerHTML = "";
+  if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) await pick(t.method); else { $("body").value = t.body; $("sel").textContent = "no method selected"; renderMethods(); }
+  saveTab();
+}
+function newTab(){ tabs[cur] = { method, body: $("body").value }; tabs.push({ method: "", body: "" }); switchTab(tabs.length - 1); }
+function closeTab(i){ tabs.splice(i, 1); if (cur >= i) cur = Math.max(0, cur - 1); const t = tabs[cur]; cur = -1; switchTab(tabs.indexOf(t)); }
+
+// ---- paste a grpcurl command ----
+// Tokenises like a shell (quotes, backslash-newline), then picks out what the
+// UI understands. Anything else (-cacert, -proto, ...) is ignored, not fatal.
+function shellSplit(cmd){
+  const out = []; let tok = "", q = null, has = false;
+  cmd = cmd.replace(/\\\r?\n/g, " ");
+  for (let i = 0; i < cmd.length; i++){
+    const c = cmd[i];
+    if (q){ if (c === q) q = null; else if (q === '"' && c === "\\" && i + 1 < cmd.length) tok += cmd[++i]; else tok += c; continue; }
+    if (c === "'" || c === '"'){ q = c; has = true; }
+    else if (c === "\\" && i + 1 < cmd.length) { tok += cmd[++i]; has = true; }
+    else if (/\s/.test(c)){ if (has || tok){ out.push(tok); tok = ""; has = false; } }
+    else { tok += c; has = true; }
+  }
+  if (has || tok) out.push(tok);
+  return out;
+}
+function parseGrpcurl(cmd){
+  const a = shellSplit(cmd.trim()); const r = { headers: [], tls: false, body: "", token: "" };
+  let i = a[0] === "grpcurl" ? 1 : 0; const pos = [];
+  const withVal = new Set(["-d","-H","-rpc-header","-max-time","-connect-timeout","-authority","-cacert","-cert","-key","-import-path","-proto","-protoset","-servername","-format","-max-msg-sz","-unix","-user-agent","-reflect-header"]);
+  for (; i < a.length; i++){
+    let t = a[i];
+    if (t.startsWith("-")){
+      t = t.replace(/^--/, "-"); let v = null; const eq = t.indexOf("=");
+      if (eq > 0){ v = t.slice(eq + 1); t = t.slice(0, eq); } else if (withVal.has(t)) v = a[++i];
+      if (t === "-d") r.body = v; else if (t === "-H" || t === "-rpc-header"){ const m = /^authorization:\s*bearer\s+(.+)$/i.exec(v || ""); if (m) r.token = m[1]; else r.headers.push(v); }
+      else if (t === "-insecure" || t === "-cacert" || t === "-cert") r.tls = true;
+      else if (t === "-plaintext") r.tls = false;
+      else if (t === "-emit-defaults") r.emit = true; else if (t === "-v") r.verbose = true;
+    } else pos.push(t);
+  }
+  if (pos.length < 2) throw new Error("expected: grpcurl [flags] host:port service.Method");
+  r.addr = pos[pos.length - 2]; r.method = pos[pos.length - 1].replace("/", ".");
+  if (r.body === "@") throw new Error("-d @ reads stdin; paste the body inline instead");
+  return r;
+}
+async function pasteCurl(){
+  const cmd = prompt("paste a grpcurl command:"); if (!cmd) return;
+  let r; try { r = parseGrpcurl(cmd); } catch(e){ setStatus(e.message, false); return; }
+  if (r.addr !== addr() || r.tls !== $("tls").checked){ $("addr").value = r.addr; ls.set("addr", r.addr); $("tls").checked = r.tls; ls.set("tls", r.tls ? "1" : "0"); await loadMethods(); }
+  if (r.token) $("token").value = r.token; ls.set("token", $("token").value);
+  $("headers").value = r.headers.join("\n"); ls.set("headers", $("headers").value);
+  if (r.emit != null) $("emit").checked = !!r.emit; if (r.verbose != null) $("verbose").checked = !!r.verbose;
+  if (!services.flatMap(s => s.methods).some(m => m.name === r.method)){ setStatus("method not on " + r.addr + ": " + r.method, false); return; }
+  if (method) newTab();
+  await pick(r.method);
+  $("body").value = r.body || "{}"; format(); saveTab();
+  setStatus("imported " + r.method + " — Invoke to run", true);
+}
+
 // ---- misc ----
 function tab(t){ ["out","desc","cmd"].forEach(x => { $(x).style.display = x === t ? "" : "none"; }); document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.t === t)); }
 function copy(t){ navigator.clipboard.writeText(t).then(() => setStatus("copied", true)); }
@@ -363,12 +443,14 @@ function editLeaf(el){
   let val; try { val = JSON.parse(nv); } catch(e){ setStatus("not a JSON literal: " + nv, false); return; }
   const objs = parseMany($("body").value);
   setPath(objs, JSON.parse(el.dataset.s), val);
-  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value); renderReq();
+  $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); renderReq();
 }
 // Cheap JSON colouring on the escaped text; grpcurl already pretty-prints.
 function hl(s){ return String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])).replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b/g,
   (m, str, colon, kw) => str ? (colon ? '<span class="k">' + str + '</span>' + colon : '<span class="s">' + str + '</span>') : kw ? '<span class="b">' + kw + '</span>' : '<span class="n">' + m + '</span>'); }
 document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); invoke(); } });
 
-loadMethods(); loadSaved(); loadHistory();
+renderTabs();
+loadMethods().then(() => { const t = tabs[cur]; if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) pick(t.method); else $("body").value = t.body; });
+loadSaved(); loadHistory();
 </script></body></html>`

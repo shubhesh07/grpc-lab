@@ -211,31 +211,32 @@ function parseMany(txt){
 // back to scanning for "@type" keys.
 function findAny(objs){
   const found = [];
-  const walkSchema = (v, type, path) => {
+  // segs: [msgIndex, key, key, ...] -- arrays, not dotted strings, so map keys
+  // containing "." or "[" round-trip. showPath() renders them for display.
+  const walkSchema = (v, type, segs) => {
     const fields = schema[type]; if (!fields || !v || typeof v !== "object") return;
     for (const k of Object.keys(v)){
       const f = fields[k]; if (!f) continue;
       const each = (x, p) => {
         if (f.kind === "any"){ if (x == null) return; // null = unset, grpcurl accepts it
           const ok = typeof x === "object" && "@type" in x;
-          found.push({ path: p, type: ok ? String(x["@type"]).replace("type.googleapis.com/", "") : "", missing: !ok }); }
+          found.push({ segs: p, path: showPath(p), type: ok ? String(x["@type"]).replace("type.googleapis.com/", "") : "", missing: !ok }); }
         else if (f.kind === "msg") walkSchema(x, f.type, p);
       };
-      const p = path ? path + "." + k : k;
-      if (f.map && v[k] && typeof v[k] === "object") Object.keys(v[k]).forEach(mk => each(v[k][mk], p + "." + mk));
-      else if (f.repeated && Array.isArray(v[k])) v[k].forEach((x, i) => each(x, p + "[" + i + "]"));
+      const p = segs.concat(k);
+      if (f.map && v[k] && typeof v[k] === "object") Object.keys(v[k]).forEach(mk => each(v[k][mk], p.concat(mk)));
+      else if (f.repeated && Array.isArray(v[k])) v[k].forEach((x, i) => each(x, p.concat(i)));
       else each(v[k], p);
     }
   };
-  const walkPlain = (v, path) => {
-    if (Array.isArray(v)) v.forEach((x, i) => walkPlain(x, path + "[" + i + "]"));
+  const walkPlain = (v, segs) => {
+    if (Array.isArray(v)) v.forEach((x, i) => walkPlain(x, segs.concat(i)));
     else if (v && typeof v === "object"){
-      if ("@type" in v) found.push({ path, type: String(v["@type"]).replace("type.googleapis.com/", ""), missing: false });
-      Object.keys(v).forEach(k => k !== "@type" && walkPlain(v[k], path ? path + "." + k : k));
+      if ("@type" in v) found.push({ segs, path: showPath(segs), type: String(v["@type"]).replace("type.googleapis.com/", ""), missing: false });
+      Object.keys(v).forEach(k => k !== "@type" && walkPlain(v[k], segs.concat(k)));
     }
   };
-  objs.forEach((o, i) => { const pre = objs.length > 1 ? "#" + i : "";
-    schema && meta.input && schema[meta.input] ? walkSchema(o, meta.input, pre) : walkPlain(o, pre); });
+  objs.forEach((o, i) => schema && meta.input && schema[meta.input] ? walkSchema(o, meta.input, [i]) : walkPlain(o, [i]));
   return found;
 }
 function scanAny(){
@@ -245,25 +246,27 @@ function scanAny(){
   $("anybox").innerHTML = found.map((f, i) =>
     '<div class="anyrow"><span class="p' + (f.missing ? ' bad' : '') + '" title="' + (f.missing ? 'missing @type -- grpcurl will reject this' : 'google.protobuf.Any') + '">' + esc(f.path || "$") + '</span>' +
     '<input list="typelist" class="grow" id="any' + i + '" value="' + esc(f.type) + '" placeholder="pkg.Message (or delete the field)">' +
-    '<button class="small" onclick="fillAny(' + i + ',' + JSON.stringify(f.path) + ')">fill</button></div>').join("");
+    '<button class="small" data-s="' + esc(JSON.stringify(f.segs)) + '" onclick="fillAny(' + i + ', JSON.parse(this.dataset.s))">fill</button></div>').join("");
   return found;
 }
-async function fillAny(i, path){
+async function fillAny(i, segs){
   const t = $("any" + i).value.trim(); if (!t) return;
   const r = await api("/api/describe?" + conn() + "&symbol=" + encodeURIComponent(t));
   if (r.error){ setStatus(r.error, false); return; }
   let tpl = {}; try { tpl = JSON.parse(r.template || "{}"); } catch(e){}
   const objs = parseMany($("body").value);
-  let idx = 0, p = path;
-  const m = /^#(\d+)\.?/.exec(p); if (m){ idx = +m[1]; p = p.slice(m[0].length); }
-  setPath(objs[idx], p, Object.assign({ "@type": "type.googleapis.com/" + t }, tpl));
+  setPath(objs, segs, Object.assign({ "@type": "type.googleapis.com/" + t }, tpl));
   $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value); if (reqTree) renderReq();
-  setStatus("filled " + (path || "$") + " with " + t, true); scanAny();
+  setStatus("filled " + showPath(segs) + " with " + t, true); scanAny();
 }
-function setPath(root, path, val){
-  const keys = path ? path.replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean) : [];
-  if (!keys.length){ Object.keys(root).forEach(k => delete root[k]); Object.assign(root, val); return; }
-  let o = root; keys.slice(0, -1).forEach(k => o = o[k]); o[keys[keys.length - 1]] = val;
+// segs[0] is the message index (client streams carry several); the rest walk into it.
+function setPath(objs, segs, val){
+  if (segs.length === 1){ const root = objs[segs[0]]; Object.keys(root).forEach(k => delete root[k]); Object.assign(root, val); return; }
+  let o = objs[segs[0]]; segs.slice(1, -1).forEach(k => o = o[k]); o[segs[segs.length - 1]] = val;
+}
+function showPath(segs){
+  const s = segs.slice(1).map(k => typeof k === "number" ? "[" + k + "]" : "." + k).join("").replace(/^\./, "");
+  return (segs[0] ? "#" + segs[0] + " " : "") + (s || "$");
 }
 
 // ---- invoke ----
@@ -334,16 +337,16 @@ function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<
 function renderOut(){
   $("treebtn").textContent = treeMode ? "raw" : "tree";
   let objs = null; if (treeMode) try { objs = parseMany(lastOut); } catch(e){}
-  $("out").innerHTML = objs && objs.length ? objs.map(o => tree(o, "", true, "")).join('<hr style="border:0;border-top:1px dashed var(--line)">') : hl(lastOut);
+  $("out").innerHTML = objs && objs.length ? objs.map((o, i) => tree(o, "", true, [i])).join('<hr style="border:0;border-top:1px dashed var(--line)">') : hl(lastOut);
 }
-function tree(v, key, last, path, editable){
+function tree(v, key, last, segs, editable){
   const comma = last ? "" : ",", label = key === "" ? "" : '<span class="k">"' + esc(key) + '"</span>: ';
   if (v === null || typeof v !== "object")
-    return '<div class="leaf">' + label + '<span class="v" data-p="' + esc(path) + '"' + (editable ? ' ondblclick="editLeaf(this)"' : '') + '>' + hl(JSON.stringify(v)) + '</span>' + comma + '</div>';
+    return '<div class="leaf">' + label + '<span class="v" data-s="' + esc(JSON.stringify(segs)) + '"' + (editable ? ' ondblclick="editLeaf(this)"' : '') + '>' + hl(JSON.stringify(v)) + '</span>' + comma + '</div>';
   const arr = Array.isArray(v), keys = Object.keys(v), o = arr ? "[" : "{", c = arr ? "]" : "}";
   if (!keys.length) return '<div class="te">' + label + o + c + comma + '</div>';
   return '<details class="t" open><summary>' + label + o + '<span class="cnt"> \u2026 ' + keys.length + ' </span><span class="cl">' + c + comma + '</span></summary><div class="tb">' +
-    keys.map((k, i) => tree(v[k], arr ? "" : k, i === keys.length - 1, path + (arr ? "[" + k + "]" : (path ? "." : "") + k), editable)).join("") +
+    keys.map((k, i) => tree(v[k], arr ? "" : k, i === keys.length - 1, segs.concat(arr ? i : k), editable)).join("") +
     '</div><div class="te">' + c + comma + '</div></details>';
 }
 function foldAll(open){ document.querySelectorAll("#out details, #reqtree details").forEach(d => d.open = open); }
@@ -352,15 +355,14 @@ function foldAll(open){ document.querySelectorAll("#out details, #reqtree detail
 function toggleReq(){ reqTree = !reqTree; $("reqview").textContent = reqTree ? "Edit" : "Tree"; $("body").style.display = reqTree ? "none" : ""; $("reqtree").style.display = reqTree ? "block" : "none"; if (reqTree) renderReq(); }
 function renderReq(){
   let objs; try { objs = parseMany($("body").value); } catch(e){ $("reqtree").innerHTML = '<span style="color:var(--err)">' + esc("invalid JSON: " + e.message) + '</span>'; return; }
-  $("reqtree").innerHTML = objs.map((o, i) => tree(o, "", true, objs.length > 1 ? "#" + i : "", true)).join('<hr style="border:0;border-top:1px dashed var(--line)">');
+  $("reqtree").innerHTML = objs.map((o, i) => tree(o, "", true, [i], true)).join('<hr style="border:0;border-top:1px dashed var(--line)">');
 }
 function editLeaf(el){
   const cur = el.textContent, nv = prompt("new value (JSON literal, e.g. \"text\", 42, true, null):", cur);
   if (nv === null || nv === cur) return;
   let val; try { val = JSON.parse(nv); } catch(e){ setStatus("not a JSON literal: " + nv, false); return; }
   const objs = parseMany($("body").value);
-  let idx = 0, p = el.dataset.p; const m = /^#(\d+)\.?/.exec(p); if (m){ idx = +m[1]; p = p.slice(m[0].length); }
-  setPath(objs[idx], p, val);
+  setPath(objs, JSON.parse(el.dataset.s), val);
   $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value); renderReq();
 }
 // Cheap JSON colouring on the escaped text; grpcurl already pretty-prints.

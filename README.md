@@ -5,7 +5,7 @@ running server, pick a method, edit JSON, invoke.
 
 ```sh
 go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest   # once
-go run . -addr localhost:8082
+go run . -addr localhost:8086
 # open http://127.0.0.1:8090
 ```
 
@@ -64,7 +64,7 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 
 | flag | default | meaning |
 |---|---|---|
-| `-addr` | `localhost:8082` | default gRPC target (editable in the UI) |
+| `-addr` | `localhost:8086` | default gRPC target (editable in the UI) |
 | `-port` | `8090` | port for this UI |
 | `-payloads` | `payloads` | directory of saved request bodies |
 | `-timeout` | `30s` | per-call timeout |
@@ -73,5 +73,8 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 
 - `-insecure` TLS only (no CA/client certs yet).
 - Requires reflection enabled on the target (go-commons registers it by default).
+- The `Any` type picker lists every message in files reachable from the
+  services. A type that lives in a file nothing references can still be
+  typed by hand — the server resolves it at invoke time.
 - Binds to `127.0.0.1` and shells out to `grpcurl` — a local dev tool, not
   something to expose on a network.

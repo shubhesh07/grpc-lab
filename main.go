@@ -138,8 +138,9 @@ func parseMethods(service, describe string) []method {
 	return ms
 }
 
+// isNoise hides the reflection service itself; health stays, Check is worth a click.
 func isNoise(service string) bool {
-	return strings.HasPrefix(service, "grpc.reflection.") || service == "grpc.health.v1.Health"
+	return strings.HasPrefix(service, "grpc.reflection.")
 }
 
 // handleMethods lists every method on the target with its request/response

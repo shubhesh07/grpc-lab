@@ -79,7 +79,7 @@ kbd{font-size:10px;color:var(--dim)}
     <input id="filter" placeholder="filter methods…" style="width:100%" oninput="renderMethods()">
     <div id="methods" style="margin-top:6px">loading…</div>
     <h3>Saved payloads</h3><div id="saved"></div>
-    <h3>Type sources <button class="small" onclick="addTypeSource()" title="pull descriptors from another server so its types decode inside Any">+</button></h3><div id="typesources"></div>
+    <h3>Type sources <button class="small" onclick="addTypeSource()" title="pull descriptors from another server so its types decode inside Any">+ server</button> <button class="small" onclick="$('psfile').click()" title="upload a .protoset built from .proto files (buf build -o x.protoset)">+ file</button><input type="file" id="psfile" accept=".protoset,.binpb,.pb,.desc" style="display:none" onchange="uploadTypeSource(this)"></h3><div id="typesources"></div>
     <h3>History <button class="small" onclick="clearHistory()">clear</button></h3><div id="history"></div>
   </section>
   <section>
@@ -380,6 +380,13 @@ async function addTypeSource(){
   const r = await api("/api/typesources", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ addr: a.trim(), tls: $("tls").checked }) });
   if (r.error){ setStatus(r.error, false); return; }
   setStatus("added type source " + a, true); loadTypeSources(); loadTypes(true);
+}
+async function uploadTypeSource(inp){
+  const f = inp.files[0]; if (!f) return; inp.value = "";
+  const name = f.name.replace(/\.(protoset|binpb|pb|desc)$/, "");
+  const r = await api("/api/typesources?name=" + encodeURIComponent(name), { method: "PUT", body: f });
+  if (r.error){ setStatus(r.error, false); return; }
+  setStatus("added type source " + name, true); loadTypeSources(); loadTypes(true);
 }
 async function clearHistory(){ await fetch("/api/history", { method: "DELETE" }); loadHistory(); }
 

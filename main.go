@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -129,6 +130,33 @@ func handleTypeSources(w http.ResponseWriter, r *http.Request) {
 			names = append(names, strings.TrimSuffix(filepath.Base(f), ".protoset"))
 		}
 		writeJSON(w, map[string]any{"sources": names})
+	case http.MethodPut:
+		// Upload a descriptor set built from .proto files (buf build -o x.protoset
+		// or protoc --descriptor_set_out --include_imports) for types no server
+		// reflects. ?name= is the file's base name.
+		name := strings.TrimSuffix(r.URL.Query().Get("name"), ".protoset")
+		if !safeName.MatchString(name) {
+			writeJSON(w, map[string]any{"error": "name must match [A-Za-z0-9._-]{1,64}"})
+			return
+		}
+		b, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
+		if err != nil || len(b) == 0 {
+			writeJSON(w, map[string]any{"error": "empty upload"})
+			return
+		}
+		out := filepath.Join(*protosetDir, name+".protoset")
+		if err := os.WriteFile(out, b, 0o644); err != nil {
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		// Reject anything grpcurl cannot read, so a bad file never breaks every call.
+		if probe, perr := exec.Command("grpcurl", "-protoset", out, "list").CombinedOutput(); perr != nil && !strings.Contains(string(probe), "No services") {
+			os.Remove(out)
+			writeJSON(w, map[string]any{"error": "not a descriptor set grpcurl can read: " + strings.TrimSpace(string(probe))})
+			return
+		}
+		typeCache.Range(func(k, _ any) bool { typeCache.Delete(k); return true })
+		writeJSON(w, map[string]any{"added": name})
 	case http.MethodPost:
 		var req struct {
 			Addr string `json:"addr"`

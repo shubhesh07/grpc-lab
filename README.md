@@ -125,8 +125,12 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 - **Type sources** — a server can only reflect the types it links in, so an
   `Any` packed with another service's message comes back as `@error … is not
   recognized` plus raw bytes. Add that service's `host:port` under *Type
-  sources* in the sidebar: grpc-lab pulls its descriptors once (`protosets/`)
-  and passes them to every call alongside the target's reflection.
+  sources* in the sidebar (`+ server`): grpc-lab pulls its descriptors once
+  (`protosets/`) and passes them to every call alongside the target's
+  reflection. If no server reflects the type at all, build a descriptor set
+  from the `.proto` and add it with `+ file` (or drop it in `protosets/`):
+  `buf build --path path/to/file.proto -o x.protoset` from the proto root, or
+  `protoc -I . --include_imports --descriptor_set_out=x.protoset path/to/file.proto`.
 - **Any lint** — before every call (the body is also auto-formatted) the body is checked against the request
   schema (walked via reflection); any `Any`-typed position without `@type`
   blocks the call with its exact path (grpcurl's own error never says which

@@ -25,9 +25,19 @@ Both land in `$(go env GOPATH)/bin` (usually `~/go/bin`). If `grpc-lab` is
 echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.zshrc && source ~/.zshrc
 ```
 
-**Prebuilt binary** — macOS / Linux / Windows from the
-[latest release](https://github.com/shubhesh07/grpc-lab/releases/latest).
-Unpack and put `grpc-lab` on your PATH; `grpcurl` is still needed on PATH.
+**Prebuilt binary** (no Go needed — e.g. a bare EC2 box). Both tools ship
+Linux/macOS/Windows tarballs:
+
+```sh
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+mkdir -p ~/bin && cd /tmp
+curl -sL https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_${ARCH/amd64/x86_64}.tar.gz | tar xz grpcurl
+curl -sL https://github.com/shubhesh07/grpc-lab/releases/latest/download/grpc-lab_$(curl -s https://api.github.com/repos/shubhesh07/grpc-lab/releases/latest | grep -o '"tag_name": "v[^"]*' | cut -c14-)_linux_${ARCH}.tar.gz | tar xz grpc-lab
+mv grpcurl grpc-lab ~/bin/ && export PATH="$PATH:$HOME/bin"
+```
+
+(macOS: replace `linux` with `darwin`; or just download from the
+[releases page](https://github.com/shubhesh07/grpc-lab/releases/latest).)
 
 **Docker** — grpcurl is bundled, nothing else to install:
 
@@ -45,6 +55,13 @@ grpc-lab -addr localhost:8082      # your gRPC server (reflection must be on)
 Open **http://127.0.0.1:8090**. Saved request bodies go to `./payloads` in
 the directory you started from (change with `-payloads`). `grpc-lab -h` lists
 all flags.
+
+Running it on a remote server (EC2, a bastion)? It binds to `127.0.0.1` on
+purpose — reach it through an SSH tunnel instead of opening a port:
+
+```sh
+ssh -L 8090:127.0.0.1:8090 user@server     # then open http://127.0.0.1:8090 locally
+```
 
 ## Why this exists
 

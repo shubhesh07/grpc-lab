@@ -65,6 +65,31 @@ purpose — reach it through an SSH tunnel instead of opening a port:
 ssh -L 8090:127.0.0.1:8090 user@server     # then open http://127.0.0.1:8090 locally
 ```
 
+To expose it on the network instead (there is no auth in front of it — only
+inside a VPN / locked-down security group), pass `-bind 0.0.0.0`. To keep it
+running as a service, `/etc/systemd/system/grpc-lab.service`:
+
+```ini
+[Unit]
+Description=grpc-lab
+After=network.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/home/ec2-user
+Environment=PATH=/home/ec2-user/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ec2-user/bin/grpc-lab -addr localhost:8082 -port 8090 -bind 0.0.0.0
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload && sudo systemctl enable --now grpc-lab
+journalctl -u grpc-lab -f
+```
+
 ## Why this exists
 
 `grpcui` is the obvious tool and it is good, but it cannot invoke any method

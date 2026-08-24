@@ -118,6 +118,7 @@ const api = async (url, opt) => (await fetch(url, opt)).json();
 const ls = { get: k => { try { return localStorage.getItem("grpclab:" + k) || ""; } catch(e){ return ""; } },
              set: (k, v) => { try { localStorage.setItem("grpclab:" + k, v); } catch(e){} } };
 ["addr","token","headers","vars"].forEach(k => { if (ls.get(k)) $(k).value = ls.get(k); $(k).oninput = () => ls.set(k, $(k).value); });
+["emit","verbose"].forEach(k => { $(k).checked = ls.get(k) === "1"; $(k).onchange = () => ls.set(k, $(k).checked ? "1" : "0"); });
 $("tls").checked = ls.get("tls") === "1"; $("tls").onchange = () => { ls.set("tls", $("tls").checked ? "1" : "0"); loadMethods(true); };
 $("body").oninput = () => { if (method) ls.set("body:" + method, $("body").value); };
 // Tab indents instead of leaving the editor.
@@ -159,28 +160,32 @@ async function pick(name){
   renderMethods();
   $("sel").innerHTML = esc(name) + ' <span style="color:var(--dim)">' + esc(meta.input) + ' → ' + esc(meta.output) + '</span>';
   const saved = ls.get("body:" + name);
-  $("body").value = ""; $("anybox").innerHTML = "";
+  $("body").value = ""; $("anybox").innerHTML = ""; $("desc").textContent = "";
   await loadTemplate(true);
-  if (saved) $("body").value = saved;
+  if (method !== name) return;              // user already clicked elsewhere
+  if (saved){ $("body").value = saved; ls.set("body:" + name, saved); }
   if (reqTree) renderReq();
 }
 
 async function loadTemplate(replace){
   if(!method) return;
-  const r = await api("/api/template?" + conn() + "&method=" + encodeURIComponent(method));
+  const name = method; schema = null;
+  const r = await api("/api/template?" + conn() + "&method=" + encodeURIComponent(name));
+  if (method !== name) return;              // stale response for a method no longer selected
   if (r.error){ setStatus(r.error, false); return; }
   $("desc").textContent = r.describe || "";
-  schema = null; api("/api/schema?" + conn() + "&type=" + encodeURIComponent(r.input)).then(sr => { schema = sr.messages || null; });
+  api("/api/schema?" + conn() + "&type=" + encodeURIComponent(r.input)).then(sr => { if (method === name) schema = sr.messages || null; });
   if (replace || !$("body").value.trim() || confirm("Replace the current request body with the template?")){
     let t = r.template || "{}";
     if (r.clientStream) t += "\n" + t; // stdin takes many messages: show two so the shape is obvious
-    $("body").value = t; ls.set("body:" + method, t); $("anybox").innerHTML = "";
+    $("body").value = t; ls.set("body:" + name, t); $("anybox").innerHTML = "";
+    if (reqTree) renderReq();
   }
 }
 
 function format(){
   const txt = $("body").value;
-  try { $("body").value = parseMany(txt).map(o => JSON.stringify(o, null, 2)).join("\n"); ls.set("body:" + method, $("body").value); }
+  try { $("body").value = parseMany(txt).map(o => JSON.stringify(o, null, 2)).join("\n"); if (method) ls.set("body:" + method, $("body").value); }
   catch(e){ setStatus("invalid JSON: " + e.message, false); }
   if (reqTree) renderReq();
 }
@@ -272,7 +277,7 @@ async function invoke(){
   const payload = substitute($("body").value);
   let objs; try { objs = parseMany(payload); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
   const missing = findAny(objs).filter(f => f.missing);
-  if ($("anybox").innerHTML) scanAny();
+  if (missing.length || $("anybox").innerHTML) scanAny();
   if (missing.length){ setStatus("Any without @type: " + missing.map(f => f.path).join(", ") + " -- fill it or delete the field", false); return; }
   setStatus("calling…", null); $("out").textContent = ""; tab("out");
   const r = await api("/api/invoke", { method: "POST", headers: {"Content-Type":"application/json"},

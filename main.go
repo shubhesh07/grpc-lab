@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	defaultAddr = flag.String("addr", "localhost:8082", "default gRPC target")
+	defaultAddr = flag.String("addr", "localhost:8086", "default gRPC target")
 	uiPort      = flag.Int("port", 8090, "port for this UI")
 	payloadDir  = flag.String("payloads", "payloads", "directory of saved request bodies")
 	callTimeout = flag.Duration("timeout", 30*time.Second, "per-call timeout")
@@ -469,6 +469,10 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	out, err := grpcurlRun(ctx, req.Payload, args...)
 	ms := time.Since(started).Milliseconds()
+	if ctx.Err() == context.DeadlineExceeded {
+		// grpcurl was killed, so it printed nothing; say why instead of showing a blank pane.
+		out = fmt.Sprintf("timed out after %s (-timeout flag)\n%s", *callTimeout, out)
+	}
 	appendHistory(historyEntry{At: started.Format(time.RFC3339), Addr: req.Addr, Method: req.Method, Payload: req.Payload, OK: err == nil, Ms: ms})
 
 	// Pasteable equivalent, with the body inline instead of on stdin.

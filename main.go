@@ -56,6 +56,11 @@ var typeRef = regexp.MustCompile(`\.([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)+)`)
 
 func main() {
 	flag.Parse()
+	if flag.NArg() > 0 {
+		// Go stops parsing flags at the first bare argument, so a stray "." or
+		// typo would silently discard every flag after it.
+		log.Fatalf("unexpected argument %q -- usage: grpc-lab [-addr host:port] [-port N] [-payloads dir] [-timeout 30s] [-bind ip]", flag.Arg(0))
+	}
 	if _, err := exec.LookPath("grpcurl"); err != nil {
 		log.Fatal("grpcurl not found on PATH. Install: go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest")
 	}

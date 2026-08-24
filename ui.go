@@ -52,6 +52,7 @@ details.t>summary::before{content:"\25BC";display:inline-block;width:14px;font-s
 details.t:not([open])>summary .cl{display:inline}details.t>summary .cl{display:none}details.t>summary .cnt{color:var(--dim);font-size:11px}details.t[open]>summary .cnt{display:none}
 .tb{margin-left:6px;padding-left:22px;border-left:1px solid var(--line)}.tb>div{white-space:pre}.tb>div.leaf,.te{padding-left:14px}.te{white-space:pre}
 .leaf .v:hover{outline:1px dashed var(--acc);cursor:text}
+.pen,.tog,.cnt,details.t>summary::before{user-select:none;-webkit-user-select:none}
 .pen{color:var(--dim);opacity:.35;cursor:pointer;margin-left:8px;font-size:11px}.pen:hover{opacity:1;color:var(--acc)}details.t>summary:hover .pen,.te:hover .pen{opacity:.8}
 .ed{display:block;width:100%;min-height:80px;margin:4px 0;white-space:pre;font:inherit}.edrow{margin:2px 0 6px}.edrow button{margin-right:6px}
 .leaf input.iv{padding:1px 4px;font:inherit;min-width:120px}
@@ -484,10 +485,15 @@ function editNode(segs){
   const ta = document.createElement("textarea"); ta.className = "ed"; ta.value = JSON.stringify(v, null, 2); ta.rows = Math.min(30, ta.value.split("\n").length + 1); ta.spellcheck = false;
   const row = document.createElement("div"); row.className = "edrow";
   const ok = document.createElement("button"); ok.className = "small primary"; ok.textContent = "apply"; const no = document.createElement("button"); no.className = "small"; no.textContent = "cancel";
-  row.append(ok, no); holder.replaceChildren(ta, row); ta.focus();
+  const cp = document.createElement("button"); cp.className = "small"; cp.textContent = "copy JSON"; cp.onclick = () => copy(ta.value);
+  row.append(ok, no, cp);
+  if (segs.length > 1){ const del = document.createElement("button"); del.className = "small"; del.textContent = "delete"; del.title = "remove this key / element"; row.append(del);
+    del.onclick = () => { let o = objs[segs[0]]; segs.slice(1, -1).forEach(k => o = o[k]); const k = segs[segs.length - 1]; Array.isArray(o) ? o.splice(k, 1) : delete o[k]; setBody(objs); setStatus("deleted " + showPath(segs), true); }; }
+  holder.replaceChildren(ta, row); ta.focus(); ta.select();
   no.onclick = renderReq;
   ok.onclick = () => {
-    let val; try { const many = parseMany(ta.value); if (many.length !== 1) throw new Error("exactly one JSON value expected"); val = many[0]; } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+    const cleaned = ta.value.replace(/\u270E/g, "").replace(/^(\s*)\/\/\s*(?=")/gm, "$1"); // text copied from the tree
+    let val; try { const many = parseMany(cleaned); if (many.length !== 1) throw new Error("exactly one JSON value expected"); val = many[0]; } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
     if (segs.length === 1) objs[segs[0]] = val; else setPath(objs, segs, val);
     setBody(objs); setStatus("updated " + showPath(segs), true);
   };

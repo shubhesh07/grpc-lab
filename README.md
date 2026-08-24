@@ -49,7 +49,9 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   double-click a value to edit it inline; `✎` on any object/array (or the
   root) opens it as JSON text to replace wholesale — paste a whole body there,
   `//` and `/* */` comments allowed; the `//` toggle on a key disables it
-  (kept as `"//key"`, dropped when sent). Client streams get `+ message`.
+  (kept as `"//key"`, dropped when sent); the editor also offers `copy JSON`
+  and `delete`. Selecting text in the tree copies clean JSON. Client streams
+  get `+ message`.
 - The response renders as the same tree (collapse/expand all, `raw` for text).
 - **Request tabs** — `+` opens an independent workspace (method + body);
   tabs persist across reloads.

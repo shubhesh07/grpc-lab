@@ -385,6 +385,21 @@ func handleTypes(w http.ResponseWriter, r *http.Request) {
 			seen[s] = true
 		}
 	}
+	// Seed with the services inside every type source too, so their messages
+	// show up in the Any picker even though the target never references them.
+	files, _ := filepath.Glob(filepath.Join(*protosetDir, "*.protoset"))
+	for _, f := range files {
+		lo, err := exec.CommandContext(ctx, "grpcurl", "-protoset", f, "list").Output()
+		if err != nil {
+			continue
+		}
+		for _, s := range strings.Fields(string(lo)) {
+			if !isNoise(s) && !seen[s] {
+				queue = append(queue, s)
+				seen[s] = true
+			}
+		}
+	}
 	var types []string
 	for len(queue) > 0 {
 		descs := describeAll(ctx, conn, addr, queue)

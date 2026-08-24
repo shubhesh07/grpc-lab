@@ -295,8 +295,17 @@ async function fillAny(i, segs){
   if (r.error){ setStatus(r.error, false); return; }
   let tpl = {}; try { tpl = JSON.parse(r.template || "{}"); } catch(e){}
   const objs = parseMany($("body").value);
-  setPath(objs, segs, Object.assign({ "@type": "type.googleapis.com/" + t }, tpl));
+  let cur = objs[segs[0]]; segs.slice(1).forEach(k => cur = cur && cur[k]);
+  // Keep whatever the developer already typed: their values win over the template.
+  const keep = cur && typeof cur === "object" ? Object.fromEntries(Object.entries(cur).filter(([k]) => k !== "@type" && k !== "value")) : {};
+  setPath(objs, segs, Object.assign({ "@type": "type.googleapis.com/" + t }, deepMerge(tpl, keep)));
   setBody(objs); setStatus("filled " + showPath(segs) + " with " + t, true);
+}
+function deepMerge(base, over){
+  if (Array.isArray(over) || over === null || typeof over !== "object" || typeof base !== "object" || base === null || Array.isArray(base)) return over;
+  const out = Object.assign({}, base);
+  for (const k of Object.keys(over)) out[k] = k in base ? deepMerge(base[k], over[k]) : over[k];
+  return out;
 }
 // segs[0] is the message index (client streams carry several); the rest walk into it.
 function setPath(objs, segs, val){

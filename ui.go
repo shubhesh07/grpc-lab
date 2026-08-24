@@ -52,6 +52,7 @@ details.t>summary::before{content:"\25BC";display:inline-block;width:14px;font-s
 details.t:not([open])>summary .cl{display:inline}details.t>summary .cl{display:none}details.t>summary .cnt{color:var(--dim);font-size:11px}details.t[open]>summary .cnt{display:none}
 .tb{margin-left:6px;padding-left:22px;border-left:1px solid var(--line)}.tb>div{white-space:pre}.tb>div.leaf,.te{padding-left:14px}.te{white-space:pre}
 .leaf .v:hover{outline:1px dashed var(--acc);cursor:text}
+.tog{color:var(--dim);opacity:.35;cursor:pointer;margin-right:6px;font-size:11px}.tog:hover,.tog.on{opacity:1;color:var(--warn)}.off,.k.off{color:var(--dim);text-decoration:line-through;opacity:.7}
 #reqtree{display:none;border:1px solid var(--line);border-radius:6px;background:#0c0e12;padding:8px;height:calc(100vh - 330px);min-height:160px;overflow:auto}
 .k{color:#7dd3fc}.s{color:#86efac}.n{color:#fb923c}.b{color:#f0abfc}
 kbd{font-size:10px;color:var(--dim)}
@@ -79,9 +80,7 @@ kbd{font-size:10px;color:var(--dim)}
     </div>
     <div class="row">
       <button onclick="loadTemplate(true)" title="regenerate request skeleton from reflection">Template</button>
-      <button onclick="format()">Format</button>
-      <button id="reqview" onclick="toggleReq()" title="fold the request; double-click a value to edit it">Tree</button>
-      <button onclick="scanAny()" title="find google.protobuf.Any fields and fill them with a concrete type">Any…</button>
+      <button id="reqview" onclick="toggleReq()" title="fold the request; double-click a value to edit it; // disables a key">Tree</button>
       <button onclick="save()">Save…</button>
       <button onclick="pasteCurl()" title="paste a grpcurl command: target, headers, body and method are filled in">Paste grpcurl</button>
       <button class="primary" onclick="invoke()">Invoke <kbd>⌃⏎</kbd></button>
@@ -129,7 +128,8 @@ const api = async (url, opt) => (await fetch(url, opt)).json();
 ["addr","token","headers","vars"].forEach(k => { if (ls.get(k)) $(k).value = ls.get(k); $(k).oninput = () => ls.set(k, $(k).value); });
 ["emit","verbose"].forEach(k => { $(k).checked = ls.get(k) === "1"; $(k).onchange = () => ls.set(k, $(k).checked ? "1" : "0"); });
 $("tls").checked = ls.get("tls") === "1"; $("tls").onchange = () => { ls.set("tls", $("tls").checked ? "1" : "0"); loadMethods(true); };
-$("body").oninput = saveTab;
+let anyTimer = 0;
+$("body").oninput = () => { saveTab(); clearTimeout(anyTimer); anyTimer = setTimeout(() => scanAny(true), 400); };
 // Tab indents instead of leaving the editor.
 $("body").addEventListener("keydown", e => { if (e.key === "Tab"){ e.preventDefault(); const t = e.target, a = t.selectionStart; t.value = t.value.slice(0, a) + "  " + t.value.slice(t.selectionEnd); t.selectionStart = t.selectionEnd = a + 2; } });
 
@@ -183,7 +183,7 @@ async function loadTemplate(replace){
   if (method !== name) return;              // stale response for a method no longer selected
   if (r.error){ setStatus(r.error, false); return; }
   $("desc").textContent = r.describe || "";
-  api("/api/schema?" + conn() + "&type=" + encodeURIComponent(r.input)).then(sr => { if (method === name) schema = sr.messages || null; });
+  api("/api/schema?" + conn() + "&type=" + encodeURIComponent(r.input)).then(sr => { if (method === name){ schema = sr.messages || null; scanAny(true); } });
   if (replace || !$("body").value.trim() || confirm("Replace the current request body with the template?")){
     let t = r.template || "{}";
     if (r.clientStream) t += "\n" + t; // stdin takes many messages: show two so the shape is obvious
@@ -194,13 +194,35 @@ async function loadTemplate(replace){
 
 function format(){
   const txt = $("body").value;
+  if (hasComments(txt)){ try { parseMany(txt); } catch(e){ setStatus("invalid JSON: " + e.message, false); } if (reqTree) renderReq(); return; } // keep the developer's comments
   try { $("body").value = parseMany(txt).map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); }
   catch(e){ setStatus("invalid JSON: " + e.message, false); }
   if (reqTree) renderReq();
 }
+// stripComments removes // and /* */ comments outside strings, so a developer
+// can comment out part of a request instead of deleting it.
+function stripComments(txt){
+  let out = "", inStr = false;
+  for (let i = 0; i < txt.length; i++){
+    const c = txt[i], n = txt[i + 1];
+    if (inStr){ out += c; if (c === "\\"){ out += n; i++; } else if (c === '"') inStr = false; continue; }
+    if (c === '"'){ inStr = true; out += c; }
+    else if (c === "/" && n === "/"){ while (i < txt.length && txt[i] !== "\n") i++; out += "\n"; }
+    else if (c === "/" && n === "*"){ i += 2; while (i < txt.length && !(txt[i] === "*" && txt[i + 1] === "/")) i++; i++; }
+    else out += c;
+  }
+  return out;
+}
+const hasComments = txt => stripComments(txt) !== txt;
+// dropDisabled removes keys prefixed with "//" (disabled from the tree view).
+function dropDisabled(v){
+  if (Array.isArray(v)) return v.map(dropDisabled);
+  if (v && typeof v === "object"){ const o = {}; for (const k of Object.keys(v)) if (!k.startsWith("//")) o[k] = dropDisabled(v[k]); return o; }
+  return v;
+}
 // Client-streaming bodies are several JSON objects back to back; parse them all.
 function parseMany(txt){
-  const out = []; let s = txt.trim();
+  const out = []; let s = stripComments(txt).trim();
   while (s){
     let depth = 0, inStr = false, i = 0;
     for (; i < s.length; i++){
@@ -225,7 +247,7 @@ function findAny(objs){
   const walkSchema = (v, type, segs) => {
     const fields = schema[type]; if (!fields || !v || typeof v !== "object") return;
     for (const k of Object.keys(v)){
-      const f = fields[k]; if (!f) continue;
+      const f = fields[k]; if (!f || k.startsWith("//")) continue;
       const each = (x, p) => {
         if (f.kind === "any"){ if (x == null) return; // null = unset, grpcurl accepts it
           const ok = typeof x === "object" && "@type" in x;
@@ -248,10 +270,12 @@ function findAny(objs){
   objs.forEach((o, i) => schema && meta.input && schema[meta.input] ? walkSchema(o, meta.input, [i]) : walkPlain(o, [i]));
   return found;
 }
-function scanAny(){
-  let objs; try { objs = parseMany($("body").value); } catch(e){ setStatus("invalid JSON: " + e.message, false); return []; }
+// Runs automatically whenever the body changes; quiet=true keeps a half-typed
+// body from spamming the status pill.
+function scanAny(quiet){
+  let objs; try { objs = parseMany($("body").value); } catch(e){ if (!quiet) setStatus("invalid JSON: " + e.message, false); return []; }
   const found = findAny(objs);
-  if (!found.length){ $("anybox").innerHTML = '<div class="types">no google.protobuf.Any fields in body' + (schema ? "" : " (schema not loaded; scanned for @type)") + '</div>'; return found; }
+  if (!found.length){ $("anybox").innerHTML = ""; return found; }
   $("anybox").innerHTML = found.map((f, i) =>
     '<div class="anyrow"><span class="p' + (f.missing ? ' bad' : '') + '" title="' + (f.missing ? 'missing @type -- grpcurl will reject this' : 'google.protobuf.Any') + '">' + esc(f.path || "$") + '</span>' +
     '<input list="typelist" class="grow" id="any' + i + '" value="' + esc(f.type) + '" placeholder="pkg.Message (or delete the field)">' +
@@ -286,10 +310,11 @@ function substitute(txt){
 }
 async function invoke(){
   if(!method){ setStatus("pick a method first", false); return; }
-  const payload = substitute($("body").value);
-  let objs; try { objs = parseMany(payload); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+  let objs; try { objs = parseMany(substitute($("body").value)); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+  objs = objs.map(dropDisabled);
+  const payload = objs.map(o => JSON.stringify(o, null, 2)).join("\n");
   const missing = findAny(objs).filter(f => f.missing);
-  if (missing.length || $("anybox").innerHTML) scanAny();
+  scanAny(true);
   if (missing.length){ setStatus("Any without @type: " + missing.map(f => f.path).join(", ") + " -- fill it or delete the field", false); return; }
   setStatus("calling…", null); $("out").textContent = ""; tab("out");
   const r = await api("/api/invoke", { method: "POST", headers: {"Content-Type":"application/json"},
@@ -420,7 +445,11 @@ function renderOut(){
   $("out").innerHTML = objs && objs.length ? objs.map((o, i) => tree(o, "", true, [i])).join('<hr style="border:0;border-top:1px dashed var(--line)">') : hl(lastOut);
 }
 function tree(v, key, last, segs, editable){
-  const comma = last ? "" : ",", label = key === "" ? "" : '<span class="k">"' + esc(key) + '"</span>: ';
+  const off = key !== "" && typeof key === "string" && key.startsWith("//");
+  const comma = last ? "" : ",";
+  const label = key === "" ? "" : (editable && typeof segs[segs.length - 1] === "string" ? '<span class="tog' + (off ? " on" : "") + '" title="' + (off ? "enable" : "disable (kept in body, not sent)") + '" data-s="' + esc(JSON.stringify(segs)) + '" onclick="toggleKey(JSON.parse(this.dataset.s))">//</span>' : '') +
+    '<span class="k' + (off ? " off" : "") + '">"' + esc(key) + '"</span>: ';
+  if (off) return '<div class="leaf off">' + label + esc(JSON.stringify(v)) + comma + '</div>';
   if (v === null || typeof v !== "object")
     return '<div class="leaf">' + label + '<span class="v" data-s="' + esc(JSON.stringify(segs)) + '"' + (editable ? ' ondblclick="editLeaf(this)"' : '') + '>' + hl(JSON.stringify(v)) + '</span>' + comma + '</div>';
   const arr = Array.isArray(v), keys = Object.keys(v), o = arr ? "[" : "{", c = arr ? "]" : "}";
@@ -436,6 +465,14 @@ function toggleReq(){ reqTree = !reqTree; $("reqview").textContent = reqTree ? "
 function renderReq(){
   let objs; try { objs = parseMany($("body").value); } catch(e){ $("reqtree").innerHTML = '<span style="color:var(--err)">' + esc("invalid JSON: " + e.message) + '</span>'; return; }
   $("reqtree").innerHTML = objs.map((o, i) => tree(o, "", true, [i], true)).join('<hr style="border:0;border-top:1px dashed var(--line)">');
+}
+function toggleKey(segs){
+  const objs = parseMany($("body").value);
+  let o = objs[segs[0]]; segs.slice(1, -1).forEach(k => o = o[k]);
+  const k = segs[segs.length - 1], nk = k.startsWith("//") ? k.slice(2) : "//" + k;
+  const rebuilt = {}; for (const key of Object.keys(o)) rebuilt[key === k ? nk : key] = o[key]; // keep key order
+  Object.keys(o).forEach(key => delete o[key]); Object.assign(o, rebuilt);
+  $("body").value = objs.map(x => JSON.stringify(x, null, 2)).join("\n"); saveTab(); renderReq(); scanAny(true);
 }
 function editLeaf(el){
   const cur = el.textContent, nv = prompt("new value (JSON literal, e.g. \"text\", 42, true, null):", cur);

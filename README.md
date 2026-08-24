@@ -36,18 +36,24 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   `server stream` / `bidi` badge.
 - Generates a request skeleton from the method's **real input type** (resolved
   through `describe`, not guessed from the method name).
-- **`google.protobuf.Any` resolver** — `Any…` finds every `@type` in the body,
-  offers every message type the server knows (walked via reflection) and
+- **`google.protobuf.Any` resolver** — every `Any` position in the body is
+  listed under the editor automatically, with a picker of every message type the server knows (walked via reflection) and
   splices in that type's template with the right `@type` URL.
 - Streaming: server-stream responses print in order; client/bidi streams take
   several JSON objects one after another in the editor.
-- **Any lint** — before every call the body is checked against the request
+- **Any lint** — before every call (the body is also auto-formatted) the body is checked against the request
   schema (walked via reflection); any `Any`-typed position without `@type`
   blocks the call with its exact path (grpcurl's own error never says which
   field). Delete the field or fill it from the picker.
 - Request and response both render as a **collapsible JSON tree** (arrows,
   guide lines, collapse/expand all). `Tree` on the request folds the body;
-  double-click a value to edit it in place. `raw` shows the response as text.
+  double-click a value to edit it in place; the `//` toggle on a key disables
+  it (kept in the body as `"//key"`, dropped when sent). `raw` shows the
+  response as text.
+- The editor accepts `//` and `/* */` comments, so any object or array element
+  can be commented out instead of deleted; comments are stripped when sent.
+  (Edits made in the tree re-serialise the body, which drops text comments —
+  use the `//` key toggle there instead.)
 - **Request tabs** — `+` opens an independent workspace (method + body);
   tabs persist across reloads.
 - **Paste grpcurl** — paste a full `grpcurl … host:port svc/Method` command;

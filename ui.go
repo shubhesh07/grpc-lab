@@ -52,7 +52,10 @@ details.t>summary::before{content:"\25BC";display:inline-block;width:14px;font-s
 details.t:not([open])>summary .cl{display:inline}details.t>summary .cl{display:none}details.t>summary .cnt{color:var(--dim);font-size:11px}details.t[open]>summary .cnt{display:none}
 .tb{margin-left:6px;padding-left:22px;border-left:1px solid var(--line)}.tb>div{white-space:pre}.tb>div.leaf,.te{padding-left:14px}.te{white-space:pre}
 .leaf .v:hover{outline:1px dashed var(--acc);cursor:text}
-.pen,.tog,.cnt,details.t>summary::before{user-select:none;-webkit-user-select:none}
+.pen,.tog,.cnt,.del,details.t>summary::before{user-select:none;-webkit-user-select:none}
+.del{color:var(--dim);opacity:0;cursor:pointer;margin-left:8px;font-size:11px}.leaf:hover>.del,summary:hover>.del,.te:hover>.del{opacity:.6}.del:hover{opacity:1;color:var(--err)}
+.leaf:hover>.pen,summary:hover>.pen,.te:hover>.pen{opacity:.6}
+.leaf.selrow,.te.selrow,details.t>summary.selrow{background:#1d3b38;border-radius:4px}
 .pen{color:var(--dim);opacity:.35;cursor:pointer;margin-left:8px;font-size:11px}.pen:hover{opacity:1;color:var(--acc)}details.t>summary:hover .pen,.te:hover .pen{opacity:.8}
 .ed{display:block;width:100%;min-height:80px;margin:4px 0;white-space:pre;font:inherit}.edrow{margin:2px 0 6px}.edrow button{margin-right:6px}
 .leaf input.iv{padding:1px 4px;font:inherit;min-width:120px}
@@ -118,7 +121,7 @@ kbd{font-size:10px;color:var(--dim)}
 let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true, reqTree = true;
 // Request tabs: each is an independent workspace (method + body); the active
 // one is what the editor shows. Persisted as one blob.
-let tabs = [], cur = 0;
+let tabs = [], cur = 0, selSegs = null, undoStack = [];
 try { const t = JSON.parse(ls.get("tabs") || "null"); if (t && t.tabs && t.tabs.length){ tabs = t.tabs; cur = Math.min(t.cur || 0, tabs.length - 1); } } catch(e){}
 if (!tabs.length) tabs = [{ method: "", body: "" }];
 const $ = id => document.getElementById(id);
@@ -453,13 +456,15 @@ function tree(v, key, last, segs, editable){
     '<span class="k' + (off ? " off" : "") + '">"' + esc(key) + '"</span>: ';
   if (off) return '<div class="leaf off">' + label + esc(JSON.stringify(v)) + comma + '</div>';
   const sj = esc(JSON.stringify(segs));
+  const rowSel = editable ? ' data-s="' + sj + '" onclick="if(!event.target.closest(\'.pen,.tog,.del,.v,input\'))selectRow(this,JSON.parse(this.dataset.s))"' : '';
+  const del = editable && segs.length > 1 ? '<span class="del" title="delete (or select the row and press Delete)" data-s="' + sj + '" onclick="event.preventDefault();deleteNode(JSON.parse(this.dataset.s))">\u2715</span>' : '';
   if (v === null || typeof v !== "object")
-    return '<div class="leaf">' + label + '<span class="v" data-s="' + sj + '"' + (editable ? ' ondblclick="editLeaf(this)" title="double-click to edit"' : '') + '>' + hl(JSON.stringify(v)) + '</span>' + comma + '</div>';
+    return '<div class="leaf"' + rowSel + '>' + label + '<span class="v" data-s="' + sj + '"' + (editable ? ' ondblclick="editLeaf(this)" title="double-click to edit"' : '') + '>' + hl(JSON.stringify(v)) + '</span>' + comma + del + '</div>';
   const arr = Array.isArray(v), keys = Object.keys(v), o = arr ? "[" : "{", c = arr ? "]" : "}";
   const pen = editable ? '<span class="pen" title="edit this ' + (arr ? "array" : "object") + ' as JSON" data-s="' + sj + '" onclick="event.preventDefault();editNode(JSON.parse(this.dataset.s))">\u270E</span>' : '';
   const wrap = editable ? ' data-n="' + sj + '"' : '';
-  if (!keys.length) return '<div class="te"' + wrap + '>' + label + o + c + comma + pen + '</div>';
-  return '<div' + wrap + '><details class="t" open><summary>' + label + o + '<span class="cnt"> \u2026 ' + keys.length + ' </span><span class="cl">' + c + comma + '</span>' + pen + '</summary><div class="tb">' +
+  if (!keys.length) return '<div class="te"' + wrap + rowSel + '>' + label + o + c + comma + pen + del + '</div>';
+  return '<div' + wrap + '><details class="t" open><summary' + rowSel + '>' + label + o + '<span class="cnt"> \u2026 ' + keys.length + ' </span><span class="cl">' + c + comma + '</span>' + pen + del + '</summary><div class="tb">' +
     keys.map((k, i) => tree(v[k], arr ? "" : k, i === keys.length - 1, segs.concat(arr ? i : k), editable)).join("") +
     '</div><div class="te">' + c + comma + '</div></details></div>';
 }
@@ -473,9 +478,19 @@ function renderReq(){
   if (!objs.length) objs = [{}];
   $("reqtree").innerHTML = objs.map((o, i) => tree(o, "", true, [i], true)).join('<hr style="border:0;border-top:1px dashed var(--line)">') +
     (meta.clientStream ? '<div class="hintline">client stream: each message is sent in order <button class="small" onclick="addMessage()">+ message</button></div>' : '') +
-    '<div class="hintline">double-click a value to edit · \u270E edits a whole object as JSON (comments allowed) · // disables a key</div>';
+    '<div class="hintline">click a row + Delete removes it (\u2318Z undo) \u00b7 double-click a value to edit \u00b7 \u270E edits an object as JSON \u00b7 // disables a key</div>';
 }
-function setBody(objs){ $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); renderReq(); scanAny(true); }
+function setBody(objs){ pushUndo(); $("body").value = objs.map(o => JSON.stringify(o, null, 2)).join("\n"); saveTab(); renderReq(); scanAny(true); }
+function pushUndo(){ undoStack.push($("body").value); if (undoStack.length > 30) undoStack.shift(); }
+function undo(){ if (!undoStack.length){ setStatus("nothing to undo", false); return; } $("body").value = undoStack.pop(); saveTab(); renderReq(); scanAny(true); setStatus("undone", true); }
+// deleteNode removes a key or array element; the root resets to {}.
+function deleteNode(segs){
+  const objs = parseMany($("body").value || "{}");
+  if (segs.length === 1) objs[segs[0]] = {};
+  else { let o = objs[segs[0]]; segs.slice(1, -1).forEach(k => o = o[k]); const k = segs[segs.length - 1]; Array.isArray(o) ? o.splice(k, 1) : delete o[k]; }
+  selSegs = null; setBody(objs); setStatus("deleted " + showPath(segs) + " \u00b7 \u2318Z to undo", true);
+}
+function selectRow(el, segs){ selSegs = segs; document.querySelectorAll("#reqtree .selrow").forEach(x => x.classList.remove("selrow")); el.classList.add("selrow"); }
 function addMessage(){ const objs = parseMany($("body").value || "{}"); objs.push(JSON.parse(JSON.stringify(objs[objs.length - 1] || {}))); setBody(objs); }
 // editNode swaps a subtree (or the root) for a textarea holding its JSON.
 function editNode(segs){
@@ -522,7 +537,12 @@ function editLeaf(el){
 // Cheap JSON colouring on the escaped text; grpcurl already pretty-prints.
 function hl(s){ return String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])).replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b/g,
   (m, str, colon, kw) => str ? (colon ? '<span class="k">' + str + '</span>' + colon : '<span class="s">' + str + '</span>') : kw ? '<span class="b">' + kw + '</span>' : '<span class="n">' + m + '</span>'); }
-document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); invoke(); } });
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); invoke(); return; }
+  if (e.target && e.target.closest && e.target.closest("input,textarea")) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z"){ e.preventDefault(); undo(); }
+  else if ((e.key === "Delete" || e.key === "Backspace") && selSegs && selSegs.length > 1){ e.preventDefault(); deleteNode(selSegs); }
+});
 
 renderTabs();
 loadMethods().then(() => { const t = tabs[cur]; if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) pick(t.method); else { $("body").value = t.body; renderReq(); } });

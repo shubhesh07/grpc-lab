@@ -46,7 +46,8 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   blocks the call with its exact path (grpcurl's own error never says which
   field). Delete the field or fill it from the picker.
 - The request is a **collapsible JSON tree that is also the editor**:
-  double-click a value to edit it inline; `✎` on any object/array (or the
+  click a row and press `Delete` (or the hover `✕`) to remove it, `⌘Z` to
+  undo; double-click a value to edit it inline; `✎` on any object/array (or the
   root) opens it as JSON text to replace wholesale — paste a whole body there,
   `//` and `/* */` comments allowed; the `//` toggle on a key disables it
   (kept as `"//key"`, dropped when sent); the editor also offers `copy JSON`

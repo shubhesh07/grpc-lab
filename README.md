@@ -80,6 +80,7 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 | `-port` | `8090` | port for this UI |
 | `-payloads` | `payloads` | directory of saved request bodies |
 | `-timeout` | `30s` | per-call timeout |
+| `-bind` | `127.0.0.1` | interface to listen on (`0.0.0.0` inside Docker) |
 
 ## Limits
 

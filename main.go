@@ -35,6 +35,7 @@ import (
 var (
 	defaultAddr = flag.String("addr", "localhost:8086", "default gRPC target")
 	uiPort      = flag.Int("port", 8090, "port for this UI")
+	bindHost    = flag.String("bind", "127.0.0.1", "interface for this UI; 0.0.0.0 only inside a container")
 	payloadDir  = flag.String("payloads", "payloads", "directory of saved request bodies")
 	callTimeout = flag.Duration("timeout", 30*time.Second, "per-call timeout")
 )
@@ -72,7 +73,7 @@ func main() {
 	http.HandleFunc("/api/payloads", handlePayloads)
 	http.HandleFunc("/api/history", handleHistory)
 
-	addr := fmt.Sprintf("127.0.0.1:%d", *uiPort)
+	addr := fmt.Sprintf("%s:%d", *bindHost, *uiPort)
 	log.Printf("grpc-lab  http://%s   target=%s   payloads=%s", addr, *defaultAddr, *payloadDir)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

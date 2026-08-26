@@ -152,7 +152,8 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 - `Describe` tab shows the proto text of the method, request and response.
 - `grpcurl` tab gives the exact pasteable command for the last call.
 - Metadata headers (`k: v` lines), bearer token, TLS (`-insecure`),
-  `-emit-defaults`, `-v` verbose mode, `{{var}}` substitution from a
+  `-emit-defaults` (on by default, so `false`/`0`/`""` fields are shown like
+  Postman does), `-v` verbose mode, `{{var}}` substitution from a
   variables box, `⌃⏎` to invoke.
 - Saves request bodies to `payloads/` (delete with ×), keeps a call history
   (`payloads/.history.jsonl`, last 100) that reloads a request in one click,

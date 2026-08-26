@@ -140,7 +140,8 @@ const api = async (url, opt) => (await fetch(url, opt)).json();
 
 // ---- persistence: small conveniences survive a reload ----
 ["addr","token","headers","vars"].forEach(k => { if (ls.get(k)) $(k).value = ls.get(k); $(k).oninput = () => ls.set(k, $(k).value); });
-["emit","verbose"].forEach(k => { $(k).checked = ls.get(k) === "1"; $(k).onchange = () => ls.set(k, $(k).checked ? "1" : "0"); });
+// emit defaults is on unless the developer turned it off: Postman-style output, false/0/"" included.
+["emit","verbose"].forEach(k => { $(k).checked = ls.get(k) ? ls.get(k) === "1" : k === "emit"; $(k).onchange = () => ls.set(k, $(k).checked ? "1" : "0"); });
 $("tls").checked = ls.get("tls") === "1"; $("tls").onchange = () => { ls.set("tls", $("tls").checked ? "1" : "0"); loadMethods(true); };
 let anyTimer = 0;
 $("body").oninput = () => { saveTab(); lint(); clearTimeout(anyTimer); anyTimer = setTimeout(() => scanAny(true), 400); };

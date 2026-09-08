@@ -84,10 +84,18 @@ const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + 
   await page.waitForFunction(() => document.querySelector(".rtab.on").textContent.startsWith("unary"));
   ok((await page.locator(".rtab").count()) === 2, "opening a saved request focuses its existing tab (no duplicate)");
 
+  step = "per-tab-target"; await page.fill("#addr", "127.0.0.1:1"); await page.press("#addr", "Enter"); await page.waitForTimeout(800);
+  ok((await page.locator("#msel option").count()) <= 1, "bad target in this tab empties its method list");
+  await page.click(".rtab >> nth=1"); await page.waitForFunction(() => document.getElementById("addr").value === "127.0.0.1:50077" && document.querySelectorAll("#msel option").length > 3);
+  ok(true, "other tab keeps its own target and methods");
+  await page.click(".rtab >> nth=0"); await page.waitForFunction(() => document.getElementById("addr").value === "127.0.0.1:1");
+  await page.fill("#addr", "127.0.0.1:50077"); await page.press("#addr", "Enter"); await page.waitForFunction(() => document.querySelectorAll("#msel option").length > 3);
+  ok(true, "target edit applies to the current tab only");
+
   step = "paste-grpcurl"; dialogs.push(`grpcurl -plaintext -H "x-a: b" -d '{"service":""}' 127.0.0.1:50077 grpc.health.v1.Health/Check`);
   await page.click("button:has-text(\"Paste grpcurl\")"); await waitStatus(/imported/);
   ok((await page.locator("#msel").inputValue()) === "grpc.health.v1.Health.Check" && (await page.inputValue("#headers")).includes("x-a: b"), "grpcurl import sets method and headers");
-  ok((await page.locator(".rtab").count()) === 3, "import opened a new tab");
+  ok((await page.locator(".rtab").count()) === 2, "import reused the tab that had no method");
 
   step = "history"; await page.click("#stabs [data-s=shist]");
   ok((await page.locator(".hist").count()) >= 4, "history has the calls");

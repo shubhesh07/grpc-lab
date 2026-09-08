@@ -53,14 +53,17 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0c0e12;border:1px sol
 .grow{flex:1;min-width:120px}
 .pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim);word-break:break-all}
 .pill.ok{color:var(--ok);border-color:#1e4634}.pill.err{color:var(--err);border-color:#4a2020}
+#status{max-width:45%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default}
 /* collection tree: native <details> per folder, rows for requests */
 details.f{margin:0}details.f>summary{list-style:none;display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:5px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--fg)}
 details.f>summary::before{content:"\25B8";color:var(--dim);width:10px;font-size:10px}details.f[open]>summary::before{content:"\25BE"}
 details.f>summary:hover{background:#1b212b}details.f>summary .acts{margin-left:auto;opacity:0;display:flex;gap:6px;color:var(--dim);font-size:11px}details.f>summary:hover .acts{opacity:1}
 .acts span:hover{color:var(--acc)}.acts span.x:hover{color:var(--err)}
-.kids{margin-left:10px;padding-left:6px;border-left:1px solid var(--line)}
-.saved{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);display:flex;justify-content:space-between;gap:6px;font-size:12px}
-.saved>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+details.f>summary .fn{font-weight:600}details.f>summary .types{margin-left:2px}
+.kids{margin-left:9px;padding-left:8px;border-left:1px solid var(--line)}
+.saved{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);display:flex;align-items:center;gap:6px;font-size:12px}
+.saved>span:nth-child(2){flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
+.mtag{flex:none;font-size:9px;padding:0 5px;border-radius:4px;background:#12302d;color:var(--acc);max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mtag.none{background:#1d2530;color:var(--dim)}
 .saved:hover{background:#1b212b;color:var(--fg)}.saved.on{background:#1d3b38;color:var(--acc)}
 .saved .x{color:var(--dim);opacity:.5}.saved .x:hover{color:var(--err);opacity:1}
 .hist{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);font-size:11px;display:flex;justify-content:space-between;gap:6px}
@@ -219,10 +222,13 @@ function lint(){
   catch(e){ const m = /position (\d+)/.exec(e.message); const ln = m ? stripComments(txt).slice(0, +m[1]).split("\n").length : null; el.textContent = "invalid JSON: " + e.message + (ln ? " (around line " + ln + ")" : ""); el.className = "hintline bad"; }
 }
 
+let loadSeq = 0;
 async function loadMethods(refresh){
   $("methods").textContent = "loading…"; types = [];
+  const my = ++loadSeq;                      // a slow failure for an old target must not overwrite a newer load
   const r = await api("/api/methods?" + conn());
-  if (r.error){ $("methods").innerHTML = '<span style="color:var(--err)">' + esc(r.error) + '</span>'; return; }
+  if (my !== loadSeq) return;
+  if (r.error){ services = []; fillSelect(); $("hint").textContent = "no reflection"; $("methods").innerHTML = '<span style="color:var(--err)">' + esc(r.error) + '</span>'; setStatus(r.error.split("\n")[0].slice(0, 120), false); return; }
   services = r.services || [];
   renderMethods(); fillSelect();
   loadTypes(refresh);
@@ -501,15 +507,17 @@ async function loadSaved(){
   (r.folders||[]).forEach(dir);
   reqs.forEach((p, i) => dir(p.name.replace(/[^/]*$/, "")).reqs.push(i));
   const closed = new Set((ls.get("closed") || "").split("\n").filter(Boolean)), curFile = tabs[cur] && tabs[cur].file;
+  const count = n => n.reqs.length + Object.values(n.dirs).reduce((a, c) => a + count(c), 0);
   const render = (n, path) => Object.keys(n.dirs).sort().map(d => { const p = path + d;
-    return '<details class="f" data-p="' + esc(p) + '"' + (closed.has(p) ? '' : ' open') + '><summary>' + esc(d) +
+    return '<details class="f" data-p="' + esc(p) + '"' + (closed.has(p) ? '' : ' open') + '><summary><span class="fn">' + esc(d) + '</span><span class="types">' + count(n.dirs[d]) + '</span>' +
       '<span class="acts"><span title="save the current request into this folder" onclick="event.preventDefault();saveAs(this.closest(\'details\').dataset.p+\'/\')">+ req</span>' +
       '<span title="new folder inside" onclick="event.preventDefault();newFolder(this.closest(\'details\').dataset.p+\'/\')">+ folder</span>' +
       '<span class="x" title="delete this folder and everything in it" onclick="event.preventDefault();deleteSaved(this.closest(\'details\').dataset.p, true)">×</span></span></summary>' +
       '<div class="kids">' + render(n.dirs[d], p + "/") + '</div></details>'; }).join("") +
+    (path === "" && n.reqs.length && Object.keys(n.dirs).length ? '<div class="svc" title="requests not in any collection">ungrouped</div>' : '') +
     n.reqs.map(i => { const p = reqs[i];
-      return '<div class="saved' + (p.name === curFile ? " on" : "") + '" data-i="' + i + '" title="' + esc(p.method ? p.method + " @ " + p.addr : "body only") + '"><span>' + esc(p.name.replace(/^.*\//, "").replace(/\.json$/, "")) +
-        (p.method ? ' <span class="types">' + esc(p.method.split(".").pop()) + '</span>' : '') + '</span><span class="x" title="delete">×</span></div>'; }).join("");
+      return '<div class="saved' + (p.name === curFile ? " on" : "") + '" data-i="' + i + '" title="' + esc(p.method ? p.method + " @ " + p.addr : "body only (saved by an older version): method is not stored, pick it and Save") + '">' +
+        '<span class="mtag' + (p.method ? '' : ' none') + '">' + esc(p.method ? p.method.split(".").pop() : "body") + '</span><span>' + esc(p.name.replace(/^.*\//, "").replace(/\.json$/, "")) + '</span><span class="x" title="delete">×</span></div>'; }).join("");
   $("saved").innerHTML = render(root, "") || '<div class="hintline">nothing saved yet — <b>+ collection</b>, then <b>Save as…</b></div>';
   document.querySelectorAll("#saved details.f").forEach(d => d.ontoggle = () => { d.open ? closed.delete(d.dataset.p) : closed.add(d.dataset.p); ls.set("closed", [...closed].join("\n")); });
   document.querySelectorAll(".saved").forEach(el => {
@@ -592,9 +600,12 @@ async function uploadTypeSource(inp){
 async function clearHistory(){ await fetch("/api/history", { method: "DELETE" }); loadHistory(); }
 
 // ---- request tabs ----
-// A tab is { method, body, file?, saved? }: file is the saved request it came
-// from, saved the body as last written, so the tab can show a dirty dot.
-function saveTab(){ tabs[cur] = Object.assign(tabs[cur] || {}, { method, body: $("body").value }); ls.set("tabs", JSON.stringify({ tabs, cur })); renderTabs(); }
+// A tab is { addr, tls, method, body, file?, saved? }: each tab has its own
+// target (Postman-style), file is the saved request it came from, saved the
+// body as last written, so the tab can show a dirty dot.
+function saveTab(){ tabs[cur] = Object.assign(tabs[cur] || {}, { addr: addr(), tls: $("tls").checked, method, body: $("body").value }); ls.set("tabs", JSON.stringify({ tabs, cur })); renderTabs(); }
+// Editing the target applies to this tab only; Enter / blur reloads its method list.
+$("addr").addEventListener("change", () => { saveTab(); loadMethods(); });
 const tabTitle = t => t.file ? t.file.replace(/^.*\//, "").replace(/\.json$/, "") : t.method ? t.method.split(".").pop() : "new";
 function renderTabs(){
   $("rtabs").innerHTML = tabs.map((t, i) => '<span class="rtab' + (i === cur ? " on" : "") + '" data-i="' + i + '" title="' + esc(t.file || t.method || "new request") + '">' + esc(tabTitle(t)) +
@@ -607,12 +618,15 @@ function renderTabs(){
 }
 async function switchTab(i){
   if (i === cur) return;
-  tabs[cur] = Object.assign(tabs[cur] || {}, { method, body: $("body").value }); cur = i;
+  saveTab(); cur = i;
   const t = tabs[cur]; method = ""; $("anybox").innerHTML = "";
+  // The tab's own target: switch the address bar and reload methods if it differs.
+  const ta = t.addr || addr(), tt = t.tls == null ? $("tls").checked : !!t.tls;
+  if (ta !== addr() || tt !== $("tls").checked){ $("addr").value = ta; ls.set("addr", ta); $("tls").checked = tt; ls.set("tls", tt ? "1" : "0"); await loadMethods(); }
   if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) await pick(t.method); else { $("body").value = t.body; $("sel").textContent = ""; $("msel").value = ""; renderMethods(); renderReq(); }
   saveTab(); loadSaved();
 }
-function newTab(){ tabs[cur] = Object.assign(tabs[cur] || {}, { method, body: $("body").value }); tabs.push({ method: "", body: "" }); return switchTab(tabs.length - 1); }
+function newTab(){ saveTab(); tabs.push({ addr: addr(), tls: $("tls").checked, method: "", body: "" }); return switchTab(tabs.length - 1); }
 function closeTab(i){ tabs.splice(i, 1); if (cur >= i) cur = Math.max(0, cur - 1); const t = tabs[cur]; cur = -1; switchTab(tabs.indexOf(t)); }
 
 // ---- paste a grpcurl command ----
@@ -681,7 +695,7 @@ function copy(t){
   if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(done, legacy); else legacy();
 }
 function copyOut(){ copy(curTab === "out" ? lastOut : $(curTab).textContent); }
-function setStatus(t, ok){ const s = $("status"); s.textContent = t; s.className = "pill" + (ok === true ? " ok" : ok === false ? " err" : ""); }
+function setStatus(t, ok){ const s = $("status"); s.textContent = t; s.title = t; s.className = "pill" + (ok === true ? " ok" : ok === false ? " err" : ""); }
 function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 // Collapsible JSON tree (JSON-Viewer style: arrows, guide lines, trailing
 // commas, everything expanded). editable=true makes leaf values double-click

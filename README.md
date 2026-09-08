@@ -127,10 +127,17 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   recognized` plus raw bytes. Add that service's `host:port` under *Type
   sources* in the sidebar (`+ server`): grpc-lab pulls its descriptors once
   (`protosets/`) and passes them to every call alongside the target's
-  reflection. If no server reflects the type at all, build a descriptor set
-  from the `.proto` and add it with `+ file` (or drop it in `protosets/`):
+  reflection. If no server reflects the type at all, add the `.proto` itself
+  with `+ file`: grpc-lab compiles it with `protoc` on the host (imports of the
+  well-known types resolve; other imports don't — a single self-contained file
+  only). For multi-file protos build the descriptor set yourself and upload
+  that (or drop it in `protosets/`):
   `buf build --path path/to/file.proto -o x.protoset` from the proto root, or
   `protoc -I . --include_imports --descriptor_set_out=x.protoset path/to/file.proto`.
+  For the well-known types themselves (`Empty`, `Struct`, `Timestamp`, the
+  wrappers — the usual `Any` payloads no service reflects):
+  `protoc -I "$(brew --prefix)/include" --include_imports --descriptor_set_out=wkt.protoset "$(brew --prefix)"/include/google/protobuf/*.proto`
+  (on Linux the include root is `/usr/include`).
 - **Any lint** — before every call (the body is also auto-formatted) the body is checked against the request
   schema (walked via reflection); any `Any`-typed position without `@type`
   blocks the call with its exact path (grpcurl's own error never says which
@@ -155,9 +162,29 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   `-emit-defaults` (on by default, so `false`/`0`/`""` fields are shown like
   Postman does), `-v` verbose mode, `{{var}}` substitution from a
   variables box, `⌃⏎` to invoke.
-- Saves request bodies to `payloads/` (delete with ×), keeps a call history
-  (`payloads/.history.jsonl`, last 100) that reloads a request in one click,
-  and remembers addr/token/headers/body per method in `localStorage`.
+- **Postman-style layout**: a sidebar (Collections / Methods / History), request
+  tabs across the top, a target + *Service / Method* dropdown bar, and the
+  request stacked above its response. The request pane has **Body / Metadata /
+  Auth / Settings** tabs; Metadata shows a count and Auth a dot when they hold
+  something. Every section collapses: `▾` folds the request or the response
+  pane (the other takes the room), `☰` / `⌘B` hides the sidebar, folders in
+  the tree fold, and the response header drags to resize the split. All of it
+  is remembered.
+- **Collections** are folders under `payloads/`, nested as deep as you like
+  (`+ collection`, then hover a folder for `+ req`, `+ folder`, delete).
+  **Save** (`⌘S`) writes the whole request — target, TLS, method, metadata
+  headers and body — back to the file the tab was opened from
+  (`{"grpc-lab": {addr, tls, method, headers}, "body": {...}}`); **Save as…**
+  asks for `collection/folder/name`. The token is never written (these files
+  get committed). Older body-only files still load. A saved request opens in
+  its own tab, which shows a `●` when it has unsaved changes. Rename or move
+  by saving under the new name and deleting the old one.
+  Call history (`payloads/.history.jsonl`, last 100) reloads a request in one
+  click, and its `➕` saves that call as a request. addr/token/headers/body per
+  method persist in `localStorage`.
+- **copy** copies whichever response-pane tab is showing — response, Describe
+  or the grpcurl command — and works over plain `http://` on a LAN IP, where
+  the browser clipboard API is unavailable.
 - Errors come back as `-format-error` JSON with the gRPC code name in the
   status pill; nothing is swallowed.
 
@@ -181,6 +208,16 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   typed by hand — the server resolves it at invoke time.
 - Binds to `127.0.0.1` and shells out to `grpcurl` — a local dev tool, not
   something to expose on a network.
+
+## Testing
+
+`go test ./...` covers the parsers. `e2e/run.sh` drives the real UI in a
+headless browser against a reflecting gRPC server (`e2e/testsrv`, the grpc
+interop TestService + Health): unary, streaming and error calls, metadata and
+auth, save-as into nested folders, dirty tabs and `⌘S`, reload persistence,
+Paste grpcurl, history, pane collapse, sidebar toggle, splitter drag, copy.
+It needs Go, node, `playwright-core` and a Playwright chromium (`PW_CORE` /
+`PW_CHROME` point at them if they are not on the module path).
 
 ## Contributing
 

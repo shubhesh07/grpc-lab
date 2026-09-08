@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -69,5 +71,38 @@ message Cart {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestCompileProto(t *testing.T) {
+	if _, err := exec.LookPath("protoc"); err != nil {
+		t.Skip("protoc not installed")
+	}
+	src := []byte(`syntax = "proto3"; package lab; import "google/protobuf/timestamp.proto";
+message Ping { google.protobuf.Timestamp at = 1; }`)
+	b, err := compileProto("ping", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b) == 0 || !strings.Contains(string(b), "google/protobuf/timestamp.proto") {
+		t.Fatalf("descriptor set missing imported file (%d bytes)", len(b))
+	}
+	if _, err := compileProto("bad", []byte("syntax = nope;")); err == nil {
+		t.Fatal("expected protoc error")
+	}
+}
+
+func TestSafeReqName(t *testing.T) {
+	ok := []string{"a", "cart/basic", "v1.2_x-y", "a/b/c"}
+	bad := []string{"", "../x", "a/../x", "a/b/c/d/e/f/g/h/i", "./x", "a/", "/a", "a b"}
+	for _, n := range ok {
+		if !safeReqName(n) {
+			t.Errorf("%q should be allowed", n)
+		}
+	}
+	for _, n := range bad {
+		if safeReqName(n) {
+			t.Errorf("%q should be rejected", n)
+		}
 	}
 }

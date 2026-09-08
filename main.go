@@ -47,6 +47,21 @@ var (
 // rather than sanitised -- an obvious rule beats a clever one.
 var safeName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
+// safeReqName allows nested collections: "name" or "collection/folder/name",
+// up to 8 levels. Every segment must pass safeName and must not be "." or "..".
+func safeReqName(name string) bool {
+	segs := strings.Split(name, "/")
+	if len(segs) > 8 {
+		return false
+	}
+	for _, s := range segs {
+		if s == "." || s == ".." || !safeName.MatchString(s) {
+			return false
+		}
+	}
+	return true
+}
+
 // rpcLine matches one line of `grpcurl describe <service>`:
 //
 //	rpc Name ( stream .pkg.In ) returns ( stream .pkg.Out );
@@ -119,6 +134,36 @@ func protosetArgs() []string {
 	return args
 }
 
+// compileProto turns one uploaded .proto into a descriptor set with protoc.
+// Imports resolve against protoc's own include dir (the well-known types);
+// ponytail: single file only, multi-file uploads use buf build locally.
+func compileProto(name string, src []byte) ([]byte, error) {
+	if _, err := exec.LookPath("protoc"); err != nil {
+		return nil, fmt.Errorf("protoc not installed on this host; upload a .protoset built with buf/protoc instead")
+	}
+	dir, err := os.MkdirTemp("", "grpclab-proto")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	if err := os.WriteFile(filepath.Join(dir, name+".proto"), src, 0o644); err != nil {
+		return nil, err
+	}
+	args := []string{"-I", dir}
+	for _, inc := range []string{"/opt/homebrew/include", "/usr/local/include", "/usr/include"} {
+		if _, err := os.Stat(filepath.Join(inc, "google", "protobuf", "any.proto")); err == nil {
+			args = append(args, "-I", inc)
+			break
+		}
+	}
+	out := filepath.Join(dir, "out.protoset")
+	args = append(args, "--include_imports", "--descriptor_set_out="+out, name+".proto")
+	if msg, err := exec.Command("protoc", args...).CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("protoc: %s", strings.TrimSpace(string(msg)))
+	}
+	return os.ReadFile(out)
+}
+
 // handleTypeSources lists (GET), fetches (POST {addr,tls}) or removes (DELETE
 // ?name=) descriptor sets pulled from other servers' reflection.
 func handleTypeSources(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +190,14 @@ func handleTypeSources(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out := filepath.Join(*protosetDir, name+".protoset")
+		if r.URL.Query().Get("proto") != "" {
+			// A raw .proto: compile it here so nobody needs protoc on their laptop.
+			b, err = compileProto(name, b)
+			if err != nil {
+				writeJSON(w, map[string]any{"error": err.Error()})
+				return
+			}
+		}
 		if err := os.WriteFile(out, b, 0o644); err != nil {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
@@ -626,31 +679,56 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 			Body string `json:"body"`
 		}
 		var out []p
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-				continue
+		// Top-level files are uncollected requests; directories are
+		// collections and folders, nested, listed as "a/b/name.json". Empty
+		// folders are reported too so the tree can show them.
+		folders := []string{}
+		var walk func(prefix string, entries []os.DirEntry)
+		walk = func(prefix string, entries []os.DirEntry) {
+			for _, e := range entries {
+				if e.IsDir() {
+					if safeReqName(prefix+e.Name()) && !strings.HasPrefix(e.Name(), ".") {
+						folders = append(folders, prefix+e.Name())
+						sub, _ := os.ReadDir(filepath.Join(*payloadDir, prefix, e.Name()))
+						walk(prefix+e.Name()+"/", sub)
+					}
+					continue
+				}
+				if !strings.HasSuffix(e.Name(), ".json") {
+					continue
+				}
+				b, err := os.ReadFile(filepath.Join(*payloadDir, prefix, e.Name()))
+				if err != nil {
+					continue
+				}
+				out = append(out, p{Name: prefix + e.Name(), Body: string(b)})
 			}
-			b, err := os.ReadFile(filepath.Join(*payloadDir, e.Name()))
-			if err != nil {
-				continue
-			}
-			out = append(out, p{Name: e.Name(), Body: string(b)})
 		}
+		walk("", entries)
 		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-		writeJSON(w, map[string]any{"payloads": out})
+		writeJSON(w, map[string]any{"payloads": out, "folders": folders})
 
 	case http.MethodPost:
 		var req struct {
 			Name string `json:"name"`
 			Body string `json:"body"`
+			Dir  bool   `json:"dir"` // create an empty folder (collection) instead of a request
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
 		}
 		name := strings.TrimSuffix(req.Name, ".json")
-		if !safeName.MatchString(name) {
-			writeJSON(w, map[string]any{"error": "name must match [A-Za-z0-9._-]{1,64}"})
+		if !safeReqName(name) {
+			writeJSON(w, map[string]any{"error": "name must be [A-Za-z0-9._-]{1,64} per segment, e.g. collection/folder/name"})
+			return
+		}
+		if req.Dir {
+			if err := os.MkdirAll(filepath.Join(*payloadDir, name), 0o755); err != nil {
+				writeJSON(w, map[string]any{"error": err.Error()})
+				return
+			}
+			writeJSON(w, map[string]any{"saved": name + "/"})
 			return
 		}
 		// Reject invalid JSON here rather than saving a body that will only
@@ -660,6 +738,7 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": "payload is not valid JSON: " + err.Error()})
 			return
 		}
+		_ = os.MkdirAll(filepath.Dir(filepath.Join(*payloadDir, name)), 0o755)
 		if err := os.WriteFile(filepath.Join(*payloadDir, name+".json"), []byte(req.Body), 0o644); err != nil {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
@@ -668,8 +747,18 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		name := strings.TrimSuffix(r.URL.Query().Get("name"), ".json")
-		if !safeName.MatchString(name) {
+		if !safeReqName(name) {
 			writeJSON(w, map[string]any{"error": "bad name"})
+			return
+		}
+		// A folder (collection) is removed with everything in it; the
+		// browser confirms first. safeReqName keeps it inside payloadDir.
+		if st, err := os.Stat(filepath.Join(*payloadDir, name)); err == nil && st.IsDir() {
+			if err := os.RemoveAll(filepath.Join(*payloadDir, name)); err != nil {
+				writeJSON(w, map[string]any{"error": err.Error()})
+				return
+			}
+			writeJSON(w, map[string]any{"deleted": name + "/"})
 			return
 		}
 		if err := os.Remove(filepath.Join(*payloadDir, name+".json")); err != nil {

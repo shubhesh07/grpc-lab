@@ -1,7 +1,9 @@
 package main
 
-// indexHTML is the whole UI: three panes (methods, request, response), no build
-// step, no dependencies. {{ADDR}} is substituted with the default target.
+// indexHTML is the whole UI, Postman-style: a sidebar (collections / methods /
+// history) and a workspace of request tabs, each with the request stacked
+// above its response. No build step, no dependencies. {{ADDR}} is substituted
+// with the default target.
 const indexHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>grpc-lab</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1115'/%3E%3Ctext x='16' y='22' font-size='17' font-family='Menlo,monospace' font-weight='700' text-anchor='middle' fill='%235eead4'%3Eg%3C/text%3E%3C/svg%3E">
@@ -9,39 +11,64 @@ const indexHTML = `<!doctype html>
 :root{--bg:#0f1115;--panel:#161a21;--line:#252b36;--fg:#d7dce5;--dim:#8b95a7;--acc:#5eead4;--err:#f87171;--ok:#4ade80;--warn:#fbbf24}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
-header{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
-header b{color:var(--acc);letter-spacing:.5px}
 input,textarea,select,button{font:inherit;color:var(--fg);background:#0c0e12;border:1px solid var(--line);border-radius:6px;padding:6px 9px}
-input:focus,textarea:focus{outline:1px solid var(--acc)}
+input:focus,textarea:focus,select:focus{outline:1px solid var(--acc)}
 button{cursor:pointer;background:#1d2530}
 button:hover{border-color:var(--acc)}
 button.primary{background:var(--acc);color:#062723;border-color:var(--acc);font-weight:600}
 button.small{padding:2px 7px;font-size:11px}
 label.chk{color:var(--dim);font-size:11px;display:flex;gap:4px;align-items:center;white-space:nowrap}
-main{display:grid;grid-template-columns:300px 1fr 1fr;height:calc(100vh - 53px)}
-section{overflow:auto;padding:10px 12px;border-right:1px solid var(--line)}
-section:last-child{border-right:0}
+/* Postman-style: sidebar | workspace (tabs / target+method bar / request / response stacked) */
+main{display:grid;grid-template-columns:var(--side,300px) 1fr;height:100vh}
+#side{overflow:auto;padding:10px 12px;border-right:1px solid var(--line);background:var(--panel);position:relative}
+#sidegrip{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize}#sidegrip:hover{background:var(--acc);opacity:.4}
+#work{display:grid;grid-template-rows:auto auto auto minmax(140px,var(--split,1fr)) auto minmax(140px,1fr);min-width:0;overflow:hidden}
+/* collapse states: a pane folds to its header row, the other takes the space */
+/* (the pane stays in the grid -- display:none would shift the rows below it) */
+#work.noreq{grid-template-rows:auto auto auto 0 auto 1fr}#work.noreq #reqpanel{visibility:hidden;overflow:hidden;padding:0;min-height:0}
+#work.nores{grid-template-rows:auto auto auto 1fr auto 0}#work.nores #respanel{visibility:hidden;overflow:hidden;padding:0;min-height:0;border:0}
+main.noside{grid-template-columns:0 1fr}main.noside #side{display:none}
+#splitbar{cursor:row-resize;user-select:none}#work.noreq #splitbar,#work.nores #splitbar{cursor:default}
+.foldbtn{font-size:11px;padding:2px 6px}
+#reqpanel,#respanel{overflow:auto;padding:0 12px;display:flex;flex-direction:column;min-height:0}
+#respanel{border-top:1px solid var(--line);padding-top:8px}
+#pbody{flex:1;display:flex;flex-direction:column;min-height:0}
+#body,#reqtree{flex:1;min-height:120px}
+#respanel pre{flex:1;min-height:100px}
+.urlbar{display:flex;gap:8px;align-items:center;padding:6px 12px 8px}
+.urlbar #addr{width:220px}.urlbar select{flex:1;min-width:0}
 h3{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);display:flex;gap:8px;align-items:center}
 .svc{color:var(--dim);margin-top:10px;font-size:11px;word-break:break-all}
 .m{padding:4px 8px;border-radius:5px;cursor:pointer;word-break:break-all;display:flex;gap:6px;align-items:center}
 .m:hover{background:#1b212b}
 .m.sel{background:#1d3b38;color:var(--acc)}
 .badge{font-size:9px;padding:0 5px;border-radius:4px;border:1px solid var(--line);color:var(--warn);flex:none}
-textarea{width:100%;resize:vertical;white-space:pre;overflow:auto;tab-size:2}
-#body{height:calc(100vh - 330px);min-height:160px}
-textarea.aux{height:64px;font-size:12px}
-pre{white-space:pre-wrap;word-break:break-word;background:#0c0e12;border:1px solid var(--line);border-radius:6px;padding:10px;margin:0;max-height:calc(100vh - 150px);overflow:auto}
+textarea{width:100%;resize:vertical;white-space:pre;overflow:auto;tab-size:2}#body{resize:none}
+textarea.aux{height:160px;font-size:12px;margin-bottom:8px}
+#pset label.chk{font-size:12px;margin:8px 0;white-space:normal}#pset label.chk input{margin-right:6px}
+code{color:var(--acc);font-size:11px}
+.tabs button .cnt{color:var(--warn);font-size:10px;margin-left:4px}
+pre{white-space:pre-wrap;word-break:break-word;background:#0c0e12;border:1px solid var(--line);border-radius:6px;padding:10px;margin:0 0 10px;overflow:auto}
 .row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
 .grow{flex:1;min-width:120px}
 .pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim);word-break:break-all}
 .pill.ok{color:var(--ok);border-color:#1e4634}.pill.err{color:var(--err);border-color:#4a2020}
-.saved{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);display:flex;justify-content:space-between;gap:6px}
-.saved:hover{background:#1b212b;color:var(--fg)}
+/* collection tree: native <details> per folder, rows for requests */
+details.f{margin:0}details.f>summary{list-style:none;display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:5px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--fg)}
+details.f>summary::before{content:"\25B8";color:var(--dim);width:10px;font-size:10px}details.f[open]>summary::before{content:"\25BE"}
+details.f>summary:hover{background:#1b212b}details.f>summary .acts{margin-left:auto;opacity:0;display:flex;gap:6px;color:var(--dim);font-size:11px}details.f>summary:hover .acts{opacity:1}
+.acts span:hover{color:var(--acc)}.acts span.x:hover{color:var(--err)}
+.kids{margin-left:10px;padding-left:6px;border-left:1px solid var(--line)}
+.saved{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);display:flex;justify-content:space-between;gap:6px;font-size:12px}
+.saved>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.saved:hover{background:#1b212b;color:var(--fg)}.saved.on{background:#1d3b38;color:var(--acc)}
 .saved .x{color:var(--dim);opacity:.5}.saved .x:hover{color:var(--err);opacity:1}
-.hist{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hist{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);font-size:11px;display:flex;justify-content:space-between;gap:6px}
+.hist>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hist .x{opacity:.4;font-size:9px}.hist:hover .x{opacity:1}.hist .x:hover{color:var(--acc)}
 .hist:hover{background:#1b212b;color:var(--fg)}
 .hist.ok::before{content:"● ";color:var(--ok)}.hist.err::before{content:"● ";color:var(--err)}
-.rtabs{display:flex;gap:4px;align-items:center;margin-bottom:8px;flex-wrap:wrap}.rtab{padding:3px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer;color:var(--dim);font-size:12px;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rtab.on{color:var(--acc);border-color:var(--acc);background:#0c0e12}.rtab .x{margin-left:6px;opacity:.5}.rtab .x:hover{opacity:1;color:var(--err)}
+.rtabs{display:flex;gap:2px;align-items:flex-end;padding:8px 12px 0;border-bottom:1px solid var(--line);overflow-x:auto}.rtab{padding:5px 10px;border:1px solid var(--line);border-bottom:0;border-radius:6px 6px 0 0;cursor:pointer;color:var(--dim);font-size:12px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}.rtab.on{color:var(--acc);background:var(--bg);border-color:var(--acc)}.rtab .x{margin-left:6px;opacity:.5}.rtab .x:hover{opacity:1;color:var(--err)}.rtab .dot{color:var(--warn);margin-left:4px}
 .tabs{display:flex;gap:2px}.tabs button{border-radius:6px 6px 0 0;border-bottom:0}.tabs button.on{background:#0c0e12;color:var(--acc)}
 .anyrow{display:flex;gap:6px;align-items:center;margin:4px 0;font-size:12px}
 .anyrow .p{color:var(--warn);flex:none}
@@ -61,66 +88,91 @@ details.t:not([open])>summary .cl{display:inline}details.t>summary .cl{display:n
 .leaf input.iv{padding:1px 4px;font:inherit;min-width:120px}
 .hintline{color:var(--dim);font-size:11px;margin:4px 0}
 .tog{color:var(--dim);opacity:0;cursor:pointer;margin-right:6px;font-size:11px}.leaf:hover>.tog,summary:hover>.tog,.te:hover>.tog{opacity:.6}.tog:hover,.tog.on{opacity:1;color:var(--warn)}.off,.k.off{color:var(--dim);text-decoration:line-through;opacity:.7}
-#body{height:calc(100vh - 360px);min-height:160px;font-size:13px;line-height:1.45;tab-size:2}
+#body{font-size:13px;line-height:1.45;tab-size:2}
 #lint.bad{color:var(--err)}#lint.good{color:var(--ok)}
-#reqtree{border:1px solid var(--line);border-radius:6px;background:#0c0e12;padding:8px;height:calc(100vh - 330px);min-height:160px;overflow:auto}
+#reqtree{border:1px solid var(--line);border-radius:6px;background:#0c0e12;padding:8px;overflow:auto}
 .k{color:#7dd3fc}.s{color:#86efac}.n{color:#fb923c}.b{color:#f0abfc}
 kbd{font-size:10px;color:var(--dim)}
 .types{color:var(--dim);font-size:11px}
 </style></head><body>
-<header>
-  <b>grpc-lab</b>
-  <input id="addr" value="{{ADDR}}" title="target host:port" style="width:190px">
-  <label class="chk"><input type="checkbox" id="tls">TLS (insecure)</label>
-  <input id="token" placeholder="bearer token (optional)" class="grow">
-  <button onclick="loadMethods(true)">Reload</button>
-  <span id="hint" class="pill">reflection</span>
-</header>
 <main>
-  <section>
-    <input id="filter" placeholder="filter methods…" style="width:100%" oninput="renderMethods()">
-    <div id="methods" style="margin-top:6px">loading…</div>
-    <h3>Saved payloads</h3><div id="saved"></div>
-    <h3>Type sources <button class="small" onclick="addTypeSource()" title="pull descriptors from another server so its types decode inside Any">+ server</button> <button class="small" onclick="$('psfile').click()" title="upload a .protoset built from .proto files (buf build -o x.protoset)">+ file</button><input type="file" id="psfile" accept=".protoset,.binpb,.pb,.desc" style="display:none" onchange="uploadTypeSource(this)"></h3><div id="typesources"></div>
-    <h3>History <button class="small" onclick="clearHistory()">clear</button></h3><div id="history"></div>
+  <section id="side">
+    <div class="row" style="margin-bottom:6px"><b style="color:var(--acc);letter-spacing:.5px">grpc-lab</b><span id="hint" class="pill" style="margin-left:auto">reflection</span></div>
+    <div class="tabs" id="stabs"><button class="on" data-s="scoll" onclick="stab('scoll')">Collections</button><button data-s="smeth" onclick="stab('smeth')">Methods</button><button data-s="shist" onclick="stab('shist')">History</button></div>
+    <div id="scoll">
+      <div class="row" style="margin:8px 0 4px"><button class="small" onclick="newFolder('')" title="a collection is a folder under payloads/">+ collection</button></div>
+      <div id="saved"></div>
+    </div>
+    <div id="smeth" style="display:none">
+      <input id="filter" placeholder="filter methods…" style="width:100%;margin-top:8px" oninput="renderMethods()">
+      <div id="methods" style="margin-top:6px">loading…</div>
+      <h3>Type sources <button class="small" onclick="addTypeSource()" title="pull descriptors from another server so its types decode inside Any">+ server</button> <button class="small" onclick="$('psfile').click()" title="upload a .proto (compiled here with protoc) or a .protoset built with buf/protoc">+ file</button><input type="file" id="psfile" accept=".proto,.protoset,.binpb,.pb,.desc" style="display:none" onchange="uploadTypeSource(this)"></h3><div id="typesources"></div>
+    </div>
+    <div id="shist" style="display:none">
+      <h3>History <button class="small" onclick="clearHistory()">clear</button></h3><div id="history"></div>
+    </div>
+    <div id="sidegrip" title="drag to resize the sidebar"></div>
   </section>
-  <section>
+  <section id="work">
     <div class="rtabs" id="rtabs"></div>
-    <div class="row">
-      <span id="sel" class="pill">no method selected</span>
-    </div>
-    <div class="row">
-      <button onclick="loadTemplate(true)" title="regenerate request skeleton from reflection">Template</button>
-      <button id="reqview" onclick="toggleReq()" title="switch between text editor and foldable tree">Tree</button>
-      <button id="fmtbtn" onclick="format()" title="pretty-print (comments are kept as-is)">Format</button>
-      <span id="reqfold" style="display:none"><button class="small" onclick="foldReq(false)">collapse</button> <button class="small" onclick="foldReq(true)">expand</button></span>
-      <button onclick="save()">Save…</button>
-      <button onclick="pasteCurl()" title="paste a grpcurl command: target, headers, body and method are filled in">Paste grpcurl</button>
+    <div class="urlbar">
+      <button class="small" onclick="toggleSide()" title="show / hide the sidebar (⌘B)">☰</button>
+      <input id="addr" value="{{ADDR}}" title="target host:port (reflection must be on)">
+      <button class="small" onclick="loadMethods(true)" title="reload services from reflection">↻</button>
+      <select id="msel" onchange="pick(this.value)" title="Service / Method"><option value="">select a method…</option></select>
       <button class="primary" onclick="invoke()">Invoke <kbd>⌃⏎</kbd></button>
-      <label class="chk"><input type="checkbox" id="emit">emit defaults</label>
-      <label class="chk"><input type="checkbox" id="verbose">verbose</label>
     </div>
-    <textarea id="body" spellcheck="false" placeholder="{}"></textarea>
-    <div id="lint" class="hintline"></div>
-    <div id="reqtree" style="display:none"></div>
-    <div id="anybox"></div>
-    <details><summary>Metadata headers</summary>
-      <textarea id="headers" class="aux" spellcheck="false" placeholder="x-tenant-id: 1&#10;x-request-id: abc"></textarea></details>
-    <details><summary>Variables ({{name}} in body)</summary>
-      <textarea id="vars" class="aux" spellcheck="false" placeholder="customerId=123&#10;sellerId=1"></textarea></details>
-  </section>
-  <section>
-    <div class="row">
+    <div class="row" style="padding:0 12px;margin-bottom:6px">
+      <div class="tabs" id="ptabs"><button class="on" data-p="pbody" onclick="ptab('pbody')">Body</button><button data-p="pmeta" onclick="ptab('pmeta')">Metadata</button><button data-p="pauth" onclick="ptab('pauth')">Auth</button><button data-p="pset" onclick="ptab('pset')">Settings</button></div>
+      <span id="sel" class="types"></span>
+      <button class="small" style="margin-left:auto" onclick="save()" title="save to this tab's file (⌘S); asks for a name the first time">Save</button>
+      <button class="small" onclick="saveAs()" title="save under a new name: name, or collection/folder/name">Save as…</button>
+      <button class="small" onclick="pasteCurl()" title="paste a grpcurl command: target, headers, body and method are filled in">Paste grpcurl</button>
+      <button class="small foldbtn" id="reqfoldbtn" onclick="foldPane('req')" title="collapse / expand the request pane">▾</button>
+    </div>
+    <div id="reqpanel">
+      <div id="pbody">
+        <div class="row">
+          <button class="small" onclick="loadTemplate(true)" title="regenerate request skeleton from reflection">Template</button>
+          <button class="small" id="reqview" onclick="toggleReq()" title="switch between text editor and foldable tree">Tree</button>
+          <button class="small" id="fmtbtn" onclick="format()" title="pretty-print (comments are kept as-is)">Format</button>
+          <span id="reqfold" style="display:none"><button class="small" onclick="foldReq(false)">collapse</button> <button class="small" onclick="foldReq(true)">expand</button></span>
+          <span id="lint" class="hintline" style="margin-left:auto"></span>
+        </div>
+        <textarea id="body" spellcheck="false" placeholder="{}"></textarea>
+        <div id="reqtree" style="display:none"></div>
+        <div id="anybox"></div>
+      </div>
+      <div id="pmeta" style="display:none">
+        <div class="hintline">metadata headers, one <code>key: value</code> per line (saved with the request)</div>
+        <textarea id="headers" class="aux" spellcheck="false" placeholder="x-tenant-id: 1&#10;x-request-id: abc"></textarea>
+        <div class="hintline">variables, <code>name=value</code> per line; <code>{{name}}</code> in the body is substituted at invoke</div>
+        <textarea id="vars" class="aux" spellcheck="false" placeholder="customerId=123&#10;sellerId=1"></textarea>
+      </div>
+      <div id="pauth" style="display:none">
+        <div class="hintline">bearer token, sent as <code>authorization: Bearer …</code> (kept in this browser only, never saved to a file)</div>
+        <input id="token" placeholder="bearer token (optional)" style="width:100%">
+      </div>
+      <div id="pset" style="display:none">
+        <label class="chk"><input type="checkbox" id="tls">TLS (<code>-insecure</code>; reloads the method list)</label>
+        <label class="chk"><input type="checkbox" id="emit">emit defaults (<code>-emit-defaults</code>: show false / 0 / "" fields in the response)</label>
+        <label class="chk"><input type="checkbox" id="verbose">verbose (<code>-v</code>: response headers and trailers)</label>
+      </div>
+    </div>
+    <div class="row" id="splitbar" style="padding:8px 12px 0;margin:0;border-top:1px solid var(--line)" title="drag to resize request / response">
       <div class="tabs"><button class="on" data-t="out" onclick="tab('out')">Response</button><button data-t="desc" onclick="tab('desc')">Describe</button><button data-t="cmd" onclick="tab('cmd')">grpcurl</button></div>
       <span id="status" class="pill">idle</span>
       <button class="small" id="treebtn" onclick="treeMode=!treeMode;renderOut()">raw</button>
       <button class="small" onclick="foldAll(false)">collapse</button>
       <button class="small" onclick="foldAll(true)">expand</button>
-      <button class="small" onclick="copy(lastOut)">copy</button>
+      <button class="small" onclick="copyOut()" title="copy the visible tab: response, describe or grpcurl command">copy</button>
+      <button class="small foldbtn" id="resfoldbtn" style="margin-left:auto" onclick="foldPane('res')" title="collapse / expand the response pane">▾</button>
     </div>
-    <pre id="out">—</pre>
-    <pre id="desc" style="display:none">—</pre>
-    <pre id="cmd" style="display:none">—</pre>
+    <div id="respanel">
+      <pre id="out">—</pre>
+      <pre id="desc" style="display:none">—</pre>
+      <pre id="cmd" style="display:none">—</pre>
+    </div>
   </section>
 </main>
 <datalist id="typelist"></datalist>
@@ -129,17 +181,18 @@ let method = "", services = [], meta = {}, types = [], schema = null, lastOut = 
 // Request tabs: each is an independent workspace (method + body); the active
 // one is what the editor shows. Persisted as one blob.
 let tabs = [], cur = 0, selSegs = null, undoStack = [];
-try { const t = JSON.parse(ls.get("tabs") || "null"); if (t && t.tabs && t.tabs.length){ tabs = t.tabs; cur = Math.min(t.cur || 0, tabs.length - 1); } } catch(e){}
-if (!tabs.length) tabs = [{ method: "", body: "" }];
 const $ = id => document.getElementById(id);
 const ls = { get: k => { try { return localStorage.getItem("grpclab:" + k) || ""; } catch(e){ return ""; } },
              set: (k, v) => { try { localStorage.setItem("grpclab:" + k, v); } catch(e){} } };
+// Restore the request tabs (must come after ls is defined).
+try { const t = JSON.parse(ls.get("tabs") || "null"); if (t && t.tabs && t.tabs.length){ tabs = t.tabs; cur = Math.min(t.cur || 0, tabs.length - 1); } } catch(e){}
+if (!tabs.length) tabs = [{ method: "", body: "" }];
 const addr = () => $("addr").value.trim();
 const conn = () => "addr=" + encodeURIComponent(addr()) + "&tls=" + ($("tls").checked ? 1 : 0);
 const api = async (url, opt) => (await fetch(url, opt)).json();
 
 // ---- persistence: small conveniences survive a reload ----
-["addr","token","headers","vars"].forEach(k => { if (ls.get(k)) $(k).value = ls.get(k); $(k).oninput = () => ls.set(k, $(k).value); });
+["addr","token","headers","vars"].forEach(k => { if (ls.get(k)) $(k).value = ls.get(k); $(k).oninput = () => { ls.set(k, $(k).value); ptabBadges(); }; });
 // emit defaults is on unless the developer turned it off: Postman-style output, false/0/"" included.
 ["emit","verbose"].forEach(k => { $(k).checked = ls.get(k) ? ls.get(k) === "1" : k === "emit"; $(k).onchange = () => ls.set(k, $(k).checked ? "1" : "0"); });
 $("tls").checked = ls.get("tls") === "1"; $("tls").onchange = () => { ls.set("tls", $("tls").checked ? "1" : "0"); loadMethods(true); };
@@ -171,8 +224,14 @@ async function loadMethods(refresh){
   const r = await api("/api/methods?" + conn());
   if (r.error){ $("methods").innerHTML = '<span style="color:var(--err)">' + esc(r.error) + '</span>'; return; }
   services = r.services || [];
-  renderMethods();
+  renderMethods(); fillSelect();
   loadTypes(refresh);
+}
+// The Service / Method dropdown in the target bar: one optgroup per service.
+function fillSelect(){
+  $("msel").innerHTML = '<option value="">select a method…</option>' + services.map(s => '<optgroup label="' + esc(s.name) + '">' + s.methods.map(m =>
+    '<option value="' + esc(m.name) + '">' + esc(s.name.split(".").pop()) + ' / ' + esc(m.name.split(".").pop()) + (m.clientStream || m.serverStream ? " ⇄" : "") + '</option>').join("") + '</optgroup>').join("");
+  $("msel").value = method;
 }
 
 function renderMethods(){
@@ -199,8 +258,8 @@ async function loadTypes(refresh){
 async function pick(name){
   method = name;
   meta = services.flatMap(s => s.methods).find(m => m.name === name) || {};
-  renderMethods();
-  $("sel").innerHTML = esc(name) + ' <span style="color:var(--dim)">' + esc(meta.input) + ' → ' + esc(meta.output) + '</span>';
+  renderMethods(); $("msel").value = name;
+  $("sel").textContent = meta.input ? meta.input + " → " + meta.output : "";
   const saved = tabs[cur].method === name ? tabs[cur].body : "";
   $("body").value = ""; $("anybox").innerHTML = ""; $("desc").textContent = "";
   await loadTemplate(true);
@@ -370,34 +429,142 @@ async function invoke(){
 const CODES = ["OK","CANCELLED","UNKNOWN","INVALID_ARGUMENT","DEADLINE_EXCEEDED","NOT_FOUND","ALREADY_EXISTS","PERMISSION_DENIED","RESOURCE_EXHAUSTED","FAILED_PRECONDITION","ABORTED","OUT_OF_RANGE","UNIMPLEMENTED","INTERNAL","UNAVAILABLE","DATA_LOSS","UNAUTHENTICATED"];
 function codeName(out){ const m = /"code":\s*(\d+)/.exec(out || ""); return m && CODES[+m[1]] ? " " + CODES[+m[1]] : ""; }
 
-// ---- saved payloads & history ----
-async function save(){
-  const name = prompt("save as (letters, digits, . _ -):", method ? method.split(".").pop() : "");
-  if(!name) return;
-  const r = await api("/api/payloads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({name, body: $("body").value}) });
+// ---- saved requests & history ----
+// A saved request is the whole thing -- target, method, headers, body -- in one
+// file: {"grpc-lab": {addr, tls, method, headers}, "body": ...}. The body is
+// stored as JSON (readable diffs) when it is one comment-free value, else as a
+// string. Files that are just a body (older saves, hand-written) still load.
+// The token is deliberately not saved: these files get committed.
+function packRequest(){
+  const txt = $("body").value; let body = txt;
+  try { const m = parseMany(txt); if (m.length === 1 && !hasComments(txt)) body = m[0]; } catch(e){}
+  return JSON.stringify({ "grpc-lab": { addr: addr(), tls: $("tls").checked, method, headers: $("headers").value }, body }, null, 2);
+}
+function unpackRequest(txt){
+  try { const o = JSON.parse(txt); if (o && typeof o === "object" && o["grpc-lab"]) return Object.assign({}, o["grpc-lab"], { body: typeof o.body === "string" ? o.body : JSON.stringify(o.body, null, 2) }); } catch(e){}
+  return { body: txt };
+}
+// restore puts a request into the editor: target (reloading methods if it
+// changed), headers, token, method, body. Shared by saved requests, history
+// and Paste grpcurl. Returns false if the method is not on the target.
+async function restore(r){
+  const tls = r.tls == null ? $("tls").checked : !!r.tls;
+  if (r.addr && (r.addr !== addr() || tls !== $("tls").checked)){ $("addr").value = r.addr; ls.set("addr", r.addr); $("tls").checked = tls; ls.set("tls", tls ? "1" : "0"); await loadMethods(); }
+  if (r.headers != null){ $("headers").value = r.headers; ls.set("headers", r.headers); }
+  if (r.token){ $("token").value = r.token; ls.set("token", r.token); }
+  if (r.method){
+    if (!services.flatMap(s => s.methods).some(m => m.name === r.method)){ setStatus("method not on " + addr() + ": " + r.method, false); return false; }
+    await pick(r.method);
+  }
+  $("body").value = r.body || "{}"; format(); $("body").dispatchEvent(new Event("input")); ptabBadges();
+  return true;
+}
+// Collections are folders under payloads/, nested as deep as you like:
+// "collection/folder/name". A tab remembers the file it was opened from or
+// saved to, so Save (⌘S) writes straight back; Save as… asks for a name.
+let lastCollection = ls.get("collection");
+function save(){ const t = tabs[cur]; return t.file ? saveTo(t.file.replace(/\.json$/, "")) : saveAs(); }
+function saveAs(prefix){
+  const t = tabs[cur], cur_ = t.file ? t.file.replace(/\.json$/, "") : "";
+  const dir = prefix != null ? prefix : cur_ ? cur_.replace(/[^/]*$/, "") : lastCollection ? lastCollection + "/" : "";
+  const base = cur_ ? cur_.replace(/^.*\//, "") : method ? method.split(".").pop() : "";
+  const name = prompt("save as: name, or collection/folder/name (letters, digits, . _ -):", dir + base);
+  if (name) return saveTo(name);
+}
+async function saveTo(name){
+  const r = await api("/api/payloads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, body: packRequest() }) });
   if(r.error){ setStatus(r.error, false); return; }
+  lastCollection = name.includes("/") ? name.replace(/\/[^/]*$/, "") : ""; ls.set("collection", lastCollection);
+  tabs[cur].file = r.saved; tabs[cur].saved = $("body").value; saveTab();
   setStatus("saved " + r.saved, true); loadSaved();
 }
+async function newFolder(prefix){
+  const name = prompt("new " + (prefix ? "folder in " + prefix : "collection") + " (letters, digits, . _ -):"); if (!name) return;
+  const r = await api("/api/payloads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name: prefix + name.trim(), dir: true }) });
+  if (r.error){ setStatus(r.error, false); return; }
+  setStatus("created " + r.saved, true); loadSaved();
+}
+async function deleteSaved(name, isDir){
+  if (!confirm("delete " + name + (isDir ? "/ and everything in it?" : "?"))) return;
+  const r = await api("/api/payloads?name=" + encodeURIComponent(name), { method: "DELETE" });
+  if (r.error){ setStatus(r.error, false); return; }
+  tabs.forEach(t => { if (t.file && (t.file === name || t.file.startsWith(name + "/"))) delete t.file; }); saveTab();
+  setStatus("deleted " + r.deleted, true); loadSaved();
+}
+// Sidebar tree: one native <details> per folder (open state remembered), a
+// row per request. Hover a folder for + req / + folder / delete.
 async function loadSaved(){
   const r = await api("/api/payloads");
-  $("saved").innerHTML = (r.payloads||[]).map((p, i) =>
-    '<div class="saved" data-i="' + i + '"><span>' + esc(p.name) + '</span><span class="x" title="delete">×</span></div>').join("") || '<span style="color:var(--dim)">none</span>';
+  const reqs = (r.payloads||[]).map(p => Object.assign({ name: p.name }, unpackRequest(p.body)));
+  const root = { dirs: {}, reqs: [] };
+  const dir = path => path.split("/").filter(Boolean).reduce((n, s) => n.dirs[s] = n.dirs[s] || { dirs: {}, reqs: [] }, root);
+  (r.folders||[]).forEach(dir);
+  reqs.forEach((p, i) => dir(p.name.replace(/[^/]*$/, "")).reqs.push(i));
+  const closed = new Set((ls.get("closed") || "").split("\n").filter(Boolean)), curFile = tabs[cur] && tabs[cur].file;
+  const render = (n, path) => Object.keys(n.dirs).sort().map(d => { const p = path + d;
+    return '<details class="f" data-p="' + esc(p) + '"' + (closed.has(p) ? '' : ' open') + '><summary>' + esc(d) +
+      '<span class="acts"><span title="save the current request into this folder" onclick="event.preventDefault();saveAs(this.closest(\'details\').dataset.p+\'/\')">+ req</span>' +
+      '<span title="new folder inside" onclick="event.preventDefault();newFolder(this.closest(\'details\').dataset.p+\'/\')">+ folder</span>' +
+      '<span class="x" title="delete this folder and everything in it" onclick="event.preventDefault();deleteSaved(this.closest(\'details\').dataset.p, true)">×</span></span></summary>' +
+      '<div class="kids">' + render(n.dirs[d], p + "/") + '</div></details>'; }).join("") +
+    n.reqs.map(i => { const p = reqs[i];
+      return '<div class="saved' + (p.name === curFile ? " on" : "") + '" data-i="' + i + '" title="' + esc(p.method ? p.method + " @ " + p.addr : "body only") + '"><span>' + esc(p.name.replace(/^.*\//, "").replace(/\.json$/, "")) +
+        (p.method ? ' <span class="types">' + esc(p.method.split(".").pop()) + '</span>' : '') + '</span><span class="x" title="delete">×</span></div>'; }).join("");
+  $("saved").innerHTML = render(root, "") || '<div class="hintline">nothing saved yet — <b>+ collection</b>, then <b>Save as…</b></div>';
+  document.querySelectorAll("#saved details.f").forEach(d => d.ontoggle = () => { d.open ? closed.delete(d.dataset.p) : closed.add(d.dataset.p); ls.set("closed", [...closed].join("\n")); });
   document.querySelectorAll(".saved").forEach(el => {
-    const p = r.payloads[+el.dataset.i];
-    el.onclick = () => { $("body").value = p.body; format(); };
-    el.querySelector(".x").onclick = async e => { e.stopPropagation(); if(!confirm("delete " + p.name + "?")) return;
-      await fetch("/api/payloads?name=" + encodeURIComponent(p.name), { method: "DELETE" }); loadSaved(); };
+    const p = reqs[+el.dataset.i];
+    el.onclick = () => openSaved(p);
+    el.querySelector(".x").onclick = e => { e.stopPropagation(); deleteSaved(p.name.replace(/\.json$/, ""), false); };
   });
 }
+// A saved request opens in its own tab, Postman-style; an empty tab is reused,
+// and a tab already showing that file is just focused.
+async function openSaved(p){
+  const i = tabs.findIndex(t => t.file === p.name);
+  if (i >= 0){ if (i !== cur) await switchTab(i); }
+  else if (tabs[cur].file || (tabs[cur].body || "").trim()) await newTab();
+  tabs[cur].file = p.name;
+  await restore(p);
+  tabs[cur].saved = $("body").value; saveTab(); loadSaved(); // saved = as formatted, so the tab starts clean
+}
+// ---- panes: collapse / expand / resize (remembered) ----
+function foldPane(p){
+  const w = $("work"), c = p === "req" ? "noreq" : "nores", other = p === "req" ? "nores" : "noreq";
+  w.classList.toggle(c); if (w.classList.contains(c)) w.classList.remove(other); // never fold both
+  ls.set("noreq", w.classList.contains("noreq") ? "1" : ""); ls.set("nores", w.classList.contains("nores") ? "1" : "");
+  $("reqfoldbtn").textContent = w.classList.contains("noreq") ? "▸" : "▾"; $("resfoldbtn").textContent = w.classList.contains("nores") ? "▸" : "▾";
+}
+function toggleSide(){ const m = document.querySelector("main"); m.classList.toggle("noside"); ls.set("noside", m.classList.contains("noside") ? "1" : ""); }
+(function(){
+  const w = $("work"); if (ls.get("noreq")) w.classList.add("noreq"); if (ls.get("nores")) w.classList.add("nores"); if (ls.get("noside")) document.querySelector("main").classList.add("noside");
+  if (ls.get("split")) w.style.setProperty("--split", ls.get("split"));
+  const m = document.querySelector("main"); if (ls.get("side")) m.style.setProperty("--side", ls.get("side"));
+  // Drag the sidebar's right edge to resize it.
+  $("sidegrip").onmousedown = e => {
+    const move = ev => m.style.setProperty("--side", Math.min(Math.max(180, ev.clientX), window.innerWidth - 500) + "px");
+    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); ls.set("side", m.style.getPropertyValue("--side")); };
+    document.addEventListener("mousemove", move); document.addEventListener("mouseup", up); e.preventDefault();
+  };
+  $("reqfoldbtn").textContent = w.classList.contains("noreq") ? "▸" : "▾"; $("resfoldbtn").textContent = w.classList.contains("nores") ? "▸" : "▾";
+  // Drag the response header to move the request/response split.
+  $("splitbar").onmousedown = e => {
+    if (e.target.closest("button") || w.classList.contains("noreq") || w.classList.contains("nores")) return;
+    const top = $("reqpanel").getBoundingClientRect().top;
+    const move = ev => w.style.setProperty("--split", Math.max(140, ev.clientY - top - 8) + "px");
+    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); ls.set("split", w.style.getPropertyValue("--split")); };
+    document.addEventListener("mousemove", move); document.addEventListener("mouseup", up); e.preventDefault();
+  };
+})();
+function stab(s){ ["scoll","smeth","shist"].forEach(x => { $(x).style.display = x === s ? "" : "none"; }); document.querySelectorAll("#stabs button").forEach(b => b.classList.toggle("on", b.dataset.s === s)); }
 async function loadHistory(){
   const r = await api("/api/history");
   $("history").innerHTML = (r.history||[]).map((h, i) =>
-    '<div class="hist ' + (h.ok ? "ok" : "err") + '" data-i="' + i + '" title="' + esc(h.at) + '">' + esc(h.at.slice(11,19)) + ' ' + esc(h.method.split(".").slice(-2).join(".")) + ' ' + h.ms + 'ms</div>').join("") || '<span style="color:var(--dim)">none</span>';
-  document.querySelectorAll(".hist").forEach(el => el.onclick = async () => {
-    const h = r.history[+el.dataset.i];
-    if (h.addr !== addr()){ $("addr").value = h.addr; ls.set("addr", h.addr); await loadMethods(); }
-    if (!services.flatMap(s => s.methods).some(m => m.name === h.method)){ setStatus("method not on this target: " + h.method, false); return; }
-    await pick(h.method); $("body").value = h.payload; format();
+    '<div class="hist ' + (h.ok ? "ok" : "err") + '" data-i="' + i + '" title="' + esc(h.at) + '"><span>' + esc(h.at.slice(11,19)) + ' ' + esc(h.method.split(".").slice(-2).join(".")) + ' ' + h.ms + 'ms</span><span class="x" title="save this call as a request">➕</span></div>').join("") || '<span style="color:var(--dim)">none</span>';
+  document.querySelectorAll(".hist").forEach(el => {
+    const h = r.history[+el.dataset.i], load = () => restore({ addr: h.addr, method: h.method, body: h.payload });
+    el.onclick = load;
+    el.querySelector(".x").onclick = async e => { e.stopPropagation(); if (await load()) saveAs(); };
   });
 }
 // Type sources: descriptor sets from other servers, so an Any carrying e.g.
@@ -417,18 +584,22 @@ async function addTypeSource(){
 }
 async function uploadTypeSource(inp){
   const f = inp.files[0]; if (!f) return; inp.value = "";
-  const name = f.name.replace(/\.(protoset|binpb|pb|desc)$/, "");
-  const r = await api("/api/typesources?name=" + encodeURIComponent(name), { method: "PUT", body: f });
+  const name = f.name.replace(/\.(proto|protoset|binpb|pb|desc)$/, "");
+  const r = await api("/api/typesources?name=" + encodeURIComponent(name) + (/\.proto$/.test(f.name) ? "&proto=1" : ""), { method: "PUT", body: f });
   if (r.error){ setStatus(r.error, false); return; }
   setStatus("added type source " + name, true); loadTypeSources(); loadTypes(true);
 }
 async function clearHistory(){ await fetch("/api/history", { method: "DELETE" }); loadHistory(); }
 
 // ---- request tabs ----
-function saveTab(){ tabs[cur] = { method, body: $("body").value }; ls.set("tabs", JSON.stringify({ tabs, cur })); renderTabs(); }
+// A tab is { method, body, file?, saved? }: file is the saved request it came
+// from, saved the body as last written, so the tab can show a dirty dot.
+function saveTab(){ tabs[cur] = Object.assign(tabs[cur] || {}, { method, body: $("body").value }); ls.set("tabs", JSON.stringify({ tabs, cur })); renderTabs(); }
+const tabTitle = t => t.file ? t.file.replace(/^.*\//, "").replace(/\.json$/, "") : t.method ? t.method.split(".").pop() : "new";
 function renderTabs(){
-  $("rtabs").innerHTML = tabs.map((t, i) => '<span class="rtab' + (i === cur ? " on" : "") + '" data-i="' + i + '">' + esc(t.method ? t.method.split(".").pop() : "new") +
-    (tabs.length > 1 ? '<span class="x" title="close">×</span>' : '') + '</span>').join("") + '<button class="small" onclick="newTab()" title="new request tab">+</button>';
+  $("rtabs").innerHTML = tabs.map((t, i) => '<span class="rtab' + (i === cur ? " on" : "") + '" data-i="' + i + '" title="' + esc(t.file || t.method || "new request") + '">' + esc(tabTitle(t)) +
+    (t.file && t.saved != null && t.body !== t.saved ? '<span class="dot" title="unsaved changes (⌘S)">●</span>' : '') +
+    (tabs.length > 1 ? '<span class="x" title="close">×</span>' : '') + '</span>').join("") + '<button class="small" onclick="newTab()" title="new request tab" style="margin-bottom:4px">+</button>';
   document.querySelectorAll(".rtab").forEach(el => {
     el.onclick = () => switchTab(+el.dataset.i);
     const x = el.querySelector(".x"); if (x) x.onclick = e => { e.stopPropagation(); closeTab(+el.dataset.i); };
@@ -436,12 +607,12 @@ function renderTabs(){
 }
 async function switchTab(i){
   if (i === cur) return;
-  tabs[cur] = { method, body: $("body").value }; cur = i;
+  tabs[cur] = Object.assign(tabs[cur] || {}, { method, body: $("body").value }); cur = i;
   const t = tabs[cur]; method = ""; $("anybox").innerHTML = "";
-  if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) await pick(t.method); else { $("body").value = t.body; $("sel").textContent = "no method selected"; renderMethods(); renderReq(); }
-  saveTab();
+  if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) await pick(t.method); else { $("body").value = t.body; $("sel").textContent = ""; $("msel").value = ""; renderMethods(); renderReq(); }
+  saveTab(); loadSaved();
 }
-function newTab(){ tabs[cur] = { method, body: $("body").value }; tabs.push({ method: "", body: "" }); switchTab(tabs.length - 1); }
+function newTab(){ tabs[cur] = Object.assign(tabs[cur] || {}, { method, body: $("body").value }); tabs.push({ method: "", body: "" }); return switchTab(tabs.length - 1); }
 function closeTab(i){ tabs.splice(i, 1); if (cur >= i) cur = Math.max(0, cur - 1); const t = tabs[cur]; cur = -1; switchTab(tabs.indexOf(t)); }
 
 // ---- paste a grpcurl command ----
@@ -484,20 +655,32 @@ function parseGrpcurl(cmd){
 async function pasteCurl(){
   const cmd = prompt("paste a grpcurl command:"); if (!cmd) return;
   let r; try { r = parseGrpcurl(cmd); } catch(e){ setStatus(e.message, false); return; }
-  if (r.addr !== addr() || r.tls !== $("tls").checked){ $("addr").value = r.addr; ls.set("addr", r.addr); $("tls").checked = r.tls; ls.set("tls", r.tls ? "1" : "0"); await loadMethods(); }
-  if (r.token) $("token").value = r.token; ls.set("token", $("token").value);
-  $("headers").value = r.headers.join("\n"); ls.set("headers", $("headers").value);
   if (r.emit != null) $("emit").checked = !!r.emit; if (r.verbose != null) $("verbose").checked = !!r.verbose;
-  if (!services.flatMap(s => s.methods).some(m => m.name === r.method)){ setStatus("method not on " + r.addr + ": " + r.method, false); return; }
   if (method) newTab();
-  await pick(r.method);
-  $("body").value = r.body || "{}"; format(); saveTab();
-  setStatus("imported " + r.method + " — Invoke to run", true);
+  if (await restore({ addr: r.addr, tls: r.tls, token: r.token, headers: r.headers.join("\n"), method: r.method, body: r.body }))
+    setStatus("imported " + r.method + " — Invoke to run", true);
 }
 
 // ---- misc ----
-function tab(t){ ["out","desc","cmd"].forEach(x => { $(x).style.display = x === t ? "" : "none"; }); document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.t === t)); }
-function copy(t){ navigator.clipboard.writeText(t).then(() => setStatus("copied", true)); }
+let curTab = "out";
+function tab(t){ curTab = t; ["out","desc","cmd"].forEach(x => { $(x).style.display = x === t ? "" : "none"; }); document.querySelectorAll(".tabs button[data-t]").forEach(b => b.classList.toggle("on", b.dataset.t === t)); }
+// Request pane tabs: Body / Metadata / Auth / Settings (Postman-style).
+function ptab(p){ ["pbody","pmeta","pauth","pset"].forEach(x => { $(x).style.display = x === p ? "" : "none"; }); document.querySelectorAll("#ptabs button").forEach(b => b.classList.toggle("on", b.dataset.p === p)); }
+// Badges so hidden state is not a surprise: header count, token set.
+function ptabBadges(){
+  const n = $("headers").value.split("\n").filter(l => l.includes(":")).length;
+  document.querySelector('#ptabs [data-p="pmeta"]').innerHTML = "Metadata" + (n ? '<span class="cnt">' + n + '</span>' : "");
+  document.querySelector('#ptabs [data-p="pauth"]').innerHTML = "Auth" + ($("token").value.trim() ? '<span class="cnt">●</span>' : "");
+}
+// navigator.clipboard only exists on https:// and localhost; grpc-lab is
+// usually opened at a LAN IP, so fall back to a hidden textarea + execCommand.
+function copy(t){
+  const done = () => setStatus("copied " + t.length + " chars", true);
+  const legacy = () => { const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.append(ta); ta.select();
+    const ok = document.execCommand("copy"); ta.remove(); ok ? done() : setStatus("copy failed: select the text and press ⌘C", false); };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(done, legacy); else legacy();
+}
+function copyOut(){ copy(curTab === "out" ? lastOut : $(curTab).textContent); }
 function setStatus(t, ok){ const s = $("status"); s.textContent = t; s.className = "pill" + (ok === true ? " ok" : ok === false ? " err" : ""); }
 function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 // Collapsible JSON tree (JSON-Viewer style: arrows, guide lines, trailing
@@ -605,12 +788,14 @@ function hl(s){ return String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":
   (m, str, colon, kw) => str ? (colon ? '<span class="k">' + str + '</span>' + colon : '<span class="s">' + str + '</span>') : kw ? '<span class="b">' + kw + '</span>' : '<span class="n">' + m + '</span>'); }
 document.addEventListener("keydown", e => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); invoke(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s"){ e.preventDefault(); save(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b"){ e.preventDefault(); toggleSide(); return; }
   if (e.target && e.target.closest && e.target.closest("input,textarea")) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z"){ e.preventDefault(); undo(); }
   else if ((e.key === "Delete" || e.key === "Backspace") && selSegs && selSegs.length > 1){ e.preventDefault(); deleteNode(selSegs); }
 });
 
-renderTabs();
+renderTabs(); ptabBadges();
 loadMethods().then(() => { const t = tabs[cur]; if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) pick(t.method); else { $("body").value = t.body; renderReq(); } });
 loadSaved(); loadHistory(); loadTypeSources();
 </script></body></html>`

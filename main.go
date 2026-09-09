@@ -267,11 +267,13 @@ func addrOf(r *http.Request) string {
 // connArgs picks the transport flags. plaintext is the dev default; tls=1
 // uses TLS without verifying the certificate, which is what a local port
 // forward to a cluster ingress needs.
+// connArgs: transport flags plus a short connect timeout, so a tab pointing at
+// an unreachable host fails in seconds instead of grpcurl's 10s default.
 func connArgs(tls bool) []string {
 	if tls {
-		return []string{"-insecure"}
+		return []string{"-insecure", "-connect-timeout", "5"}
 	}
-	return []string{"-plaintext"}
+	return []string{"-plaintext", "-connect-timeout", "5"}
 }
 
 func tlsOf(r *http.Request) bool { return r.URL.Query().Get("tls") == "1" }
@@ -744,6 +746,29 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]any{"saved": name + ".json"})
+
+	case http.MethodPatch:
+		// Move / rename a saved request: {"from": "a/b/x", "to": "c/y"}.
+		var req struct{ From, To string }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		from, to := strings.TrimSuffix(req.From, ".json"), strings.TrimSuffix(req.To, ".json")
+		if !safeReqName(from) || !safeReqName(to) {
+			writeJSON(w, map[string]any{"error": "name must be [A-Za-z0-9._-]{1,64} per segment, e.g. collection/folder/name"})
+			return
+		}
+		if _, err := os.Stat(filepath.Join(*payloadDir, to+".json")); err == nil && from != to {
+			writeJSON(w, map[string]any{"error": to + ".json already exists"})
+			return
+		}
+		_ = os.MkdirAll(filepath.Dir(filepath.Join(*payloadDir, to)), 0o755)
+		if err := os.Rename(filepath.Join(*payloadDir, from+".json"), filepath.Join(*payloadDir, to+".json")); err != nil {
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"moved": to + ".json"})
 
 	case http.MethodDelete:
 		name := strings.TrimSuffix(r.URL.Query().Get("name"), ".json")

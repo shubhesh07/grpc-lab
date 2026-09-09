@@ -10,13 +10,13 @@ const { chromium } = require(process.env.PW_CORE || "playwright-core");
 const exe = process.env.PW_CHROME; // optional: explicit chromium/headless-shell binary
 const PAY = process.env.PAYLOADS || path.join(__dirname, "payloads");
 const UI = "http://127.0.0.1:8097/";
-let step = "", passed = 0, page;
+let step = "", passed = 0, page, errors = [];
 const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + msg); passed++; };
 
 (async () => {
   const browser = await chromium.launch({ executablePath: exe || undefined, headless: true });
   page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
-  const errors = []; page.on("pageerror", e => errors.push(String(e)));
+  page.on("pageerror", e => errors.push(String(e)));
   page.on("console", m => { if (m.type() === "error") errors.push("console: " + m.text()); });
   const dialogs = []; page.on("dialog", d => { const r = dialogs.shift(); r === undefined ? d.dismiss() : d.accept(r === true ? undefined : r); });
   const status = () => page.locator("#status").innerText();
@@ -61,7 +61,7 @@ const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + 
   const cmd = await page.locator("#cmd").textContent();
   ok(cmd.includes("x-test: 1") && cmd.includes("authorization"), "headers + bearer in grpcurl command");
 
-  step = "save-as"; dialogs.push("E2E/Cart/unary"); await page.click("button:has-text(\"Save as…\")"); await waitStatus(/saved E2E\/Cart\/unary/);
+  step = "save-as"; await page.click("button:has-text(\"Save as…\")"); await page.waitForSelector("#dlg[open]"); await page.fill("#dlgfolder", "E2E/Cart"); await page.fill("#dlgname", "unary"); await page.click("#dlgok"); await waitStatus(/saved E2E\/Cart\/unary/);
   await page.waitForSelector("#saved details[data-p='E2E/Cart'] .saved");
   ok((await page.locator(".rtab.on").innerText()).startsWith("unary"), "tab named after file");
   const file = JSON.parse(fs.readFileSync(path.join(PAY, "E2E/Cart/unary.json"), "utf8"));
@@ -92,10 +92,27 @@ const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + 
   await page.fill("#addr", "127.0.0.1:50077"); await page.press("#addr", "Enter"); await page.waitForFunction(() => document.querySelectorAll("#msel option").length > 3);
   ok(true, "target edit applies to the current tab only");
 
+  step = "per-tab-response/a"; await page.click(".rtab >> nth=0"); await page.waitForFunction(() => document.getElementById("msel").value === "grpc.testing.TestService.UnaryCall" && document.getElementById("body").value.includes("responseSize"));
+  step = "per-tab-response/b"; await page.click("button.primary"); await waitStatus(/ok/); const resp0 = await page.locator("#out").innerText();
+  ok(resp0.includes("payload"), "tab 0 got its response");
+  step = "per-tab-response/c"; await page.click(".rtab >> nth=1"); await page.waitForFunction(() => document.getElementById("status").textContent === "idle");
+  ok((await page.locator("#out").innerText()).trim() === "—", "tab 1 shows no response of its own");
+  await page.click(".rtab >> nth=0"); await page.waitForFunction(() => /ok/.test(document.getElementById("status").textContent));
+  ok((await page.locator("#out").innerText()) === resp0, "tab 0 response restored on switch");
+
+  step = "move"; await page.hover("#saved details[data-p='E2E/Cart'] .saved"); await page.click("#saved details[data-p='E2E/Cart'] .saved .mv");
+  await page.waitForSelector("#dlg[open]"); ok((await page.inputValue("#dlgfolder")) === "E2E/Cart" && (await page.inputValue("#dlgname")) === "unary", "move dialog prefilled");
+  await page.fill("#dlgfolder", "E2E/Moved"); await page.click("#dlgok"); await waitStatus(/moved to E2E\/Moved\/unary/);
+  await page.waitForSelector("#saved details[data-p='E2E/Moved'] .saved");
+  ok(fs.existsSync(path.join(PAY, "E2E/Moved/unary.json")) && !fs.existsSync(path.join(PAY, "E2E/Cart/unary.json")), "file moved on disk");
+  ok((await page.locator(".rtab.on").innerText()).startsWith("unary"), "open tab still bound after move");
+  await page.fill("#body", '{"responseSize": 5}'); await page.keyboard.press("Meta+s"); await waitStatus(/saved E2E\/Moved\/unary/);
+  ok(JSON.parse(fs.readFileSync(path.join(PAY, "E2E/Moved/unary.json"), "utf8")).body.responseSize === 5, "⌘S after move writes to the new path");
+
   step = "paste-grpcurl"; dialogs.push(`grpcurl -plaintext -H "x-a: b" -d '{"service":""}' 127.0.0.1:50077 grpc.health.v1.Health/Check`);
   await page.click("button:has-text(\"Paste grpcurl\")"); await waitStatus(/imported/);
   ok((await page.locator("#msel").inputValue()) === "grpc.health.v1.Health.Check" && (await page.inputValue("#headers")).includes("x-a: b"), "grpcurl import sets method and headers");
-  ok((await page.locator(".rtab").count()) === 2, "import reused the tab that had no method");
+  ok((await page.locator(".rtab").count()) === 3, "import opened a new tab");
 
   step = "history"; await page.click("#stabs [data-s=shist]");
   ok((await page.locator(".hist").count()) >= 4, "history has the calls");
@@ -143,4 +160,4 @@ const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + 
   await browser.close();
   if (errors.length) throw new Error("page errors: " + errors.join(" | "));
   console.log("E2E OK: " + passed + " checks passed");
-})().catch(async e => { console.error(String(e.stack || e)); try { console.error("status:", await page.locator("#status").innerText(), "| step:", step); await page.screenshot({ path: "fail.png" }); } catch(_){} process.exit(1); });
+})().catch(async e => { console.error(String(e.stack || e)); try { console.error("page errors:", errors); console.error("status:", await page.locator("#status").innerText(), "| step:", step, "| tab:", await page.locator(".rtab.on").innerText(), "| msel:", await page.locator("#msel").inputValue(), "| body:", (await page.inputValue("#body")).slice(0, 40), "| out:", (await page.locator("#out").innerText()).slice(0, 30)); await page.screenshot({ path: "fail.png" }); } catch(_){} process.exit(1); });

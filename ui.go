@@ -54,6 +54,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#0c0e12;border:1px sol
 .pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim);word-break:break-all}
 .pill.ok{color:var(--ok);border-color:#1e4634}.pill.err{color:var(--err);border-color:#4a2020}
 #status{max-width:45%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:16px 18px;min-width:380px}dialog::backdrop{background:rgba(0,0,0,.55)}
+dialog label{display:block;font-size:11px;color:var(--dim);margin:8px 0}dialog label input{display:block;width:100%;margin-top:3px;font-size:13px}
 /* collection tree: native <details> per folder, rows for requests */
 details.f{margin:0}details.f>summary{list-style:none;display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:5px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--fg)}
 details.f>summary::before{content:"\25B8";color:var(--dim);width:10px;font-size:10px}details.f[open]>summary::before{content:"\25BE"}
@@ -65,7 +67,7 @@ details.f>summary .fn{font-weight:600}details.f>summary .types{margin-left:2px}
 .saved>span:nth-child(2){flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
 .mtag{flex:none;font-size:9px;padding:0 5px;border-radius:4px;background:#12302d;color:var(--acc);max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mtag.none{background:#1d2530;color:var(--dim)}
 .saved:hover{background:#1b212b;color:var(--fg)}.saved.on{background:#1d3b38;color:var(--acc)}
-.saved .x{color:var(--dim);opacity:.5}.saved .x:hover{color:var(--err);opacity:1}
+.saved .x{color:var(--dim);opacity:.5}.saved .x:hover{color:var(--err);opacity:1}.saved .mv{opacity:0}.saved:hover .mv{opacity:.5}.saved .mv:hover{color:var(--acc);opacity:1}
 .hist{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);font-size:11px;display:flex;justify-content:space-between;gap:6px}
 .hist>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hist .x{opacity:.4;font-size:9px}.hist:hover .x{opacity:1}.hist .x:hover{color:var(--acc)}
@@ -179,6 +181,13 @@ kbd{font-size:10px;color:var(--dim)}
   </section>
 </main>
 <datalist id="typelist"></datalist>
+<datalist id="folderlist"></datalist>
+<dialog id="dlg"><form method="dialog" onsubmit="dlgOk(event)">
+  <h3 id="dlgtitle" style="margin:0 0 10px">Save request</h3>
+  <label>Collection / folder<input id="dlgfolder" list="folderlist" placeholder="(none) — or type a new one, e.g. Cart/Checkout" autocomplete="off"></label>
+  <label>Name<input id="dlgname" placeholder="letters, digits, . _ -" required pattern="[A-Za-z0-9._\-]{1,64}"></label>
+  <div class="row" style="justify-content:flex-end;margin:12px 0 0"><button type="button" onclick="$('dlg').close()">Cancel</button><button class="primary" id="dlgok">Save</button></div>
+</form></dialog>
 <script>
 let method = "", services = [], meta = {}, types = [], schema = null, lastOut = "", treeMode = true, reqTree = false;
 // Request tabs: each is an independent workspace (method + body); the active
@@ -232,6 +241,8 @@ async function loadMethods(refresh){
   services = r.services || [];
   renderMethods(); fillSelect();
   loadTypes(refresh);
+  // The current tab's method becomes selectable once its target reflects: re-pick it (pick restores the tab's body).
+  const t = tabs[cur]; if (t && t.method && !method && services.flatMap(s => s.methods).some(m => m.name === t.method)) pick(t.method);
 }
 // The Service / Method dropdown in the target bar: one optgroup per service.
 function fillSelect(){
@@ -422,14 +433,18 @@ async function invoke(){
   scanAny(true);
   if (missing.length){ setStatus("Any without @type: " + missing.map(f => f.path).join(", ") + " -- fill it or delete the field", false); return; }
   setStatus("calling…", null); $("out").textContent = ""; tab("out");
+  const mine = tabs[cur];
   const r = await api("/api/invoke", { method: "POST", headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ addr: addr(), method, payload, token: $("token").value.trim(), headers: $("headers").value,
       tls: $("tls").checked, emitDefaults: $("emit").checked, verbose: $("verbose").checked }) });
+  const summary = { t: (r.ok ? "ok" : "error" + codeName(r.output)) + " · " + (r.ms||0) + "ms", ok: r.ok };
+  if (tabs[cur] !== mine){ Object.assign(mine, { out: r.output || r.error || "(no output)", cmd: r.command || "", status: summary }); loadHistory(); return; } // user switched tabs meanwhile: park the result on its tab
   lastOut = r.output || r.error || "(no output)"; renderOut();
   const un = /"@error":\s*"([\w.]+) is not recognized/.exec(lastOut);
   if (un) setStatus("response has an Any of " + un[1] + " the target cannot reflect \u2014 add its server under Type sources", false);
   $("cmd").textContent = r.command || "";
-  if (!un) setStatus((r.ok ? "ok" : "error" + codeName(r.output)) + " · " + (r.ms||0) + "ms", r.ok);
+  if (!un) setStatus(summary.t, r.ok);
+  Object.assign(mine, { out: lastOut, cmd: $("cmd").textContent, status: { t: $("status").textContent, ok: r.ok } }); // the response belongs to this tab
   loadHistory();
 }
 const CODES = ["OK","CANCELLED","UNKNOWN","INVALID_ARGUMENT","DEADLINE_EXCEEDED","NOT_FOUND","ALREADY_EXISTS","PERMISSION_DENIED","RESOURCE_EXHAUSTED","FAILED_PRECONDITION","ABORTED","OUT_OF_RANGE","UNIMPLEMENTED","INTERNAL","UNAVAILABLE","DATA_LOSS","UNAUTHENTICATED"];
@@ -470,12 +485,29 @@ async function restore(r){
 // saved to, so Save (⌘S) writes straight back; Save as… asks for a name.
 let lastCollection = ls.get("collection");
 function save(){ const t = tabs[cur]; return t.file ? saveTo(t.file.replace(/\.json$/, "")) : saveAs(); }
+// Save as… / Move open a dialog with a folder picker (existing folders
+// suggested; typing a new path creates it) and a name.
+let folders = [], dlgAction = null;
+function openDlg(title, folder, name, action){
+  $("folderlist").innerHTML = folders.map(f => '<option value="' + esc(f) + '">').join("");
+  $("dlgtitle").textContent = title; $("dlgok").textContent = title.split(" ")[0]; $("dlgfolder").value = folder.replace(/\/$/, ""); $("dlgname").value = name; dlgAction = action;
+  $("dlg").showModal(); $("dlgname").focus(); $("dlgname").select();
+}
+function dlgOk(e){ e.preventDefault(); const f = $("dlgfolder").value.trim().replace(/^\/+|\/+$/g, ""), n = $("dlgname").value.trim(); if (!n) return; $("dlg").close(); dlgAction((f ? f + "/" : "") + n); }
 function saveAs(prefix){
   const t = tabs[cur], cur_ = t.file ? t.file.replace(/\.json$/, "") : "";
   const dir = prefix != null ? prefix : cur_ ? cur_.replace(/[^/]*$/, "") : lastCollection ? lastCollection + "/" : "";
   const base = cur_ ? cur_.replace(/^.*\//, "") : method ? method.split(".").pop() : "";
-  const name = prompt("save as: name, or collection/folder/name (letters, digits, . _ -):", dir + base);
-  if (name) return saveTo(name);
+  openDlg("Save request", dir, base, saveTo);
+}
+function moveSaved(name){
+  const from = name.replace(/\.json$/, "");
+  openDlg("Move request", from.replace(/[^/]*$/, ""), from.replace(/^.*\//, ""), async to => {
+    const r = await api("/api/payloads", { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ from, to }) });
+    if (r.error){ setStatus(r.error, false); return; }
+    tabs.forEach(t => { if (t.file === from + ".json") t.file = r.moved; }); saveTab();
+    setStatus("moved to " + r.moved, true); loadSaved();
+  });
 }
 async function saveTo(name){
   const r = await api("/api/payloads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, body: packRequest() }) });
@@ -504,7 +536,7 @@ async function loadSaved(){
   const reqs = (r.payloads||[]).map(p => Object.assign({ name: p.name }, unpackRequest(p.body)));
   const root = { dirs: {}, reqs: [] };
   const dir = path => path.split("/").filter(Boolean).reduce((n, s) => n.dirs[s] = n.dirs[s] || { dirs: {}, reqs: [] }, root);
-  (r.folders||[]).forEach(dir);
+  (r.folders||[]).forEach(dir); folders = (r.folders||[]).slice().sort();
   reqs.forEach((p, i) => dir(p.name.replace(/[^/]*$/, "")).reqs.push(i));
   const closed = new Set((ls.get("closed") || "").split("\n").filter(Boolean)), curFile = tabs[cur] && tabs[cur].file;
   const count = n => n.reqs.length + Object.values(n.dirs).reduce((a, c) => a + count(c), 0);
@@ -517,13 +549,14 @@ async function loadSaved(){
     (path === "" && n.reqs.length && Object.keys(n.dirs).length ? '<div class="svc" title="requests not in any collection">ungrouped</div>' : '') +
     n.reqs.map(i => { const p = reqs[i];
       return '<div class="saved' + (p.name === curFile ? " on" : "") + '" data-i="' + i + '" title="' + esc(p.method ? p.method + " @ " + p.addr : "body only (saved by an older version): method is not stored, pick it and Save") + '">' +
-        '<span class="mtag' + (p.method ? '' : ' none') + '">' + esc(p.method ? p.method.split(".").pop() : "body") + '</span><span>' + esc(p.name.replace(/^.*\//, "").replace(/\.json$/, "")) + '</span><span class="x" title="delete">×</span></div>'; }).join("");
+        '<span class="mtag' + (p.method ? '' : ' none') + '">' + esc(p.method ? p.method.split(".").pop() : "body") + '</span><span>' + esc(p.name.replace(/^.*\//, "").replace(/\.json$/, "")) + '</span><span class="x mv" title="move / rename">⇢</span><span class="x" title="delete">×</span></div>'; }).join("");
   $("saved").innerHTML = render(root, "") || '<div class="hintline">nothing saved yet — <b>+ collection</b>, then <b>Save as…</b></div>';
   document.querySelectorAll("#saved details.f").forEach(d => d.ontoggle = () => { d.open ? closed.delete(d.dataset.p) : closed.add(d.dataset.p); ls.set("closed", [...closed].join("\n")); });
   document.querySelectorAll(".saved").forEach(el => {
     const p = reqs[+el.dataset.i];
     el.onclick = () => openSaved(p);
-    el.querySelector(".x").onclick = e => { e.stopPropagation(); deleteSaved(p.name.replace(/\.json$/, ""), false); };
+    el.querySelector(".mv").onclick = e => { e.stopPropagation(); moveSaved(p.name); };
+    el.querySelector(".x:not(.mv)").onclick = e => { e.stopPropagation(); deleteSaved(p.name.replace(/\.json$/, ""), false); };
   });
 }
 // A saved request opens in its own tab, Postman-style; an empty tab is reused,
@@ -603,7 +636,10 @@ async function clearHistory(){ await fetch("/api/history", { method: "DELETE" })
 // A tab is { addr, tls, method, body, file?, saved? }: each tab has its own
 // target (Postman-style), file is the saved request it came from, saved the
 // body as last written, so the tab can show a dirty dot.
-function saveTab(){ tabs[cur] = Object.assign(tabs[cur] || {}, { addr: addr(), tls: $("tls").checked, method, body: $("body").value }); ls.set("tabs", JSON.stringify({ tabs, cur })); renderTabs(); }
+// Each tab also keeps its last response (out, cmd, status) in memory only:
+// responses can be big, so they are not persisted.
+// A tab keeps its method while its target is unreachable (method is "" then), so it comes back once reflection works.
+function saveTab(){ tabs[cur] = Object.assign(tabs[cur] || {}, { addr: addr(), tls: $("tls").checked, method: method || (tabs[cur] && tabs[cur].method) || "", body: $("body").value }); ls.set("tabs", JSON.stringify({ tabs: tabs.map(({ out, cmd, status, ...t }) => t), cur })); renderTabs(); }
 // Editing the target applies to this tab only; Enter / blur reloads its method list.
 $("addr").addEventListener("change", () => { saveTab(); loadMethods(); });
 const tabTitle = t => t.file ? t.file.replace(/^.*\//, "").replace(/\.json$/, "") : t.method ? t.method.split(".").pop() : "new";
@@ -622,8 +658,14 @@ async function switchTab(i){
   const t = tabs[cur]; method = ""; $("anybox").innerHTML = "";
   // The tab's own target: switch the address bar and reload methods if it differs.
   const ta = t.addr || addr(), tt = t.tls == null ? $("tls").checked : !!t.tls;
-  if (ta !== addr() || tt !== $("tls").checked){ $("addr").value = ta; ls.set("addr", ta); $("tls").checked = tt; ls.set("tls", tt ? "1" : "0"); await loadMethods(); }
-  if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) await pick(t.method); else { $("body").value = t.body; $("sel").textContent = ""; $("msel").value = ""; renderMethods(); renderReq(); }
+  if (ta !== addr() || tt !== $("tls").checked){
+    // Show the tab as-is now; reflection for its target may take seconds (or fail) and loadMethods re-picks the method when it lands.
+    $("addr").value = ta; ls.set("addr", ta); $("tls").checked = tt; ls.set("tls", tt ? "1" : "0");
+    $("body").value = t.body || ""; $("sel").textContent = t.method || ""; $("msel").value = ""; renderReq(); lint(); loadMethods();
+  } else if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) await pick(t.method);
+  else { $("body").value = t.body || ""; $("sel").textContent = ""; $("msel").value = ""; renderMethods(); renderReq(); }
+  // This tab's own response and status.
+  lastOut = t.out || ""; renderOut(); if (!lastOut) $("out").textContent = "—"; $("cmd").textContent = t.cmd || ""; setStatus(t.status ? t.status.t : "idle", t.status ? t.status.ok : null);
   saveTab(); loadSaved();
 }
 function newTab(){ saveTab(); tabs.push({ addr: addr(), tls: $("tls").checked, method: "", body: "" }); return switchTab(tabs.length - 1); }
@@ -810,6 +852,9 @@ document.addEventListener("keydown", e => {
 });
 
 renderTabs(); ptabBadges();
+// Show the tab's body right away; the method list may take seconds if its
+// target is down, and the editor must not look empty meanwhile.
+{ const t = tabs[cur]; if (t.addr) $("addr").value = t.addr; if (t.tls != null) $("tls").checked = !!t.tls; $("body").value = t.body || ""; renderReq(); lint(); if (t.method) $("sel").textContent = t.method; }
 loadMethods().then(() => { const t = tabs[cur]; if (t.method && services.flatMap(s => s.methods).some(m => m.name === t.method)) pick(t.method); else { $("body").value = t.body; renderReq(); } });
 loadSaved(); loadHistory(); loadTypeSources();
 </script></body></html>`

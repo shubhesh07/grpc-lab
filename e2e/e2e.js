@@ -84,8 +84,8 @@ const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + 
   await page.waitForFunction(() => document.querySelector(".rtab.on").textContent.startsWith("unary"));
   ok((await page.locator(".rtab").count()) === 2, "opening a saved request focuses its existing tab (no duplicate)");
 
-  step = "per-tab-target"; await page.fill("#addr", "127.0.0.1:1"); await page.press("#addr", "Enter"); await page.waitForTimeout(800);
-  ok((await page.locator("#msel option").count()) <= 1, "bad target in this tab empties its method list");
+  step = "per-tab-target"; await page.fill("#addr", "127.0.0.1:1"); await page.press("#addr", "Enter"); await page.waitForFunction(() => document.querySelectorAll("#msel option").length <= 1);
+  ok(true, "bad target in this tab empties its method list");
   await page.click(".rtab >> nth=1"); await page.waitForFunction(() => document.getElementById("addr").value === "127.0.0.1:50077" && document.querySelectorAll("#msel option").length > 3);
   ok(true, "other tab keeps its own target and methods");
   await page.click(".rtab >> nth=0"); await page.waitForFunction(() => document.getElementById("addr").value === "127.0.0.1:1");
@@ -118,11 +118,21 @@ const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + 
   ok((await page.locator(".hist").count()) >= 4, "history has the calls");
   await page.click("#stabs [data-s=scoll]");
 
-  step = "folders"; dialogs.push("Sub"); await page.hover("#saved details[data-p='E2E/Cart'] > summary"); await page.click("#saved details[data-p='E2E/Cart'] > summary .acts span >> nth=1");
-  await page.waitForSelector("#saved details[data-p='E2E/Cart/Sub']");
+  step = "folders"; await page.hover("#saved details[data-p='E2E/Cart'] > summary"); await page.click("#saved details[data-p='E2E/Cart'] > summary .acts span >> nth=1");
+  await page.waitForSelector("#dlg[open]"); ok((await page.inputValue("#dlgfolder")) === "E2E/Cart", "new-folder dialog prefilled with parent"); await page.fill("#dlgname", "Sub"); await page.click("#dlgok");
+  step = "folders/b"; await page.waitForSelector("#saved details[data-p='E2E/Cart/Sub']");
   ok(fs.existsSync(path.join(PAY, "E2E/Cart/Sub")), "+ folder created nested dir");
-  await page.click("#saved details[data-p='E2E/Cart/Sub'] > summary");
+  step = "folders/c"; await page.click("#saved details[data-p='E2E/Cart/Sub'] > summary .fn");
   await page.waitForFunction(() => (localStorage.getItem("grpclab:closed") || "").includes("E2E/Cart/Sub")); ok(true, "folder collapse remembered");
+
+  step = "move-folder"; await page.hover("#saved details[data-p='E2E/Moved'] > summary"); await page.click("#saved details[data-p='E2E/Moved'] > summary .acts span >> nth=2");
+  await page.waitForSelector("#dlg[open]"); ok((await page.inputValue("#dlgname")) === "Moved", "move-folder dialog prefilled");
+  await page.fill("#dlgfolder", "E2E/Cart/Sub"); await page.click("#dlgok"); await waitStatus(/moved to E2E\/Cart\/Sub\/Moved/);
+  await page.waitForSelector("#saved details[data-p='E2E/Cart/Sub/Moved'] .saved", { state: "attached" });
+  ok(fs.existsSync(path.join(PAY, "E2E/Cart/Sub/Moved/unary.json")) && !fs.existsSync(path.join(PAY, "E2E/Moved")), "folder moved on disk with its request");
+  await page.click(".rtab >> nth=0"); await page.waitForFunction(() => document.querySelector(".rtab.on").textContent.startsWith("unary"));
+  await page.fill("#body", '{"responseSize": 6}'); await page.keyboard.press("Meta+s"); await waitStatus(/saved E2E\/Cart\/Sub\/Moved\/unary/);
+  ok(true, "tab bound to a file inside the moved folder follows it");
 
   step = "collapse-panes"; await page.click("#resfoldbtn"); ok(await page.locator("#respanel").isHidden(), "response pane collapses");
   await page.click("#resfoldbtn"); ok(await page.locator("#respanel").isVisible(), "response pane expands");

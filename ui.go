@@ -516,11 +516,21 @@ async function saveTo(name){
   tabs[cur].file = r.saved; tabs[cur].saved = $("body").value; saveTab();
   setStatus("saved " + r.saved, true); loadSaved();
 }
-async function newFolder(prefix){
-  const name = prompt("new " + (prefix ? "folder in " + prefix : "collection") + " (letters, digits, . _ -):"); if (!name) return;
-  const r = await api("/api/payloads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name: prefix + name.trim(), dir: true }) });
-  if (r.error){ setStatus(r.error, false); return; }
-  setStatus("created " + r.saved, true); loadSaved();
+function newFolder(prefix){
+  openDlg(prefix ? "New folder" : "New collection", prefix, "", async name => {
+    const r = await api("/api/payloads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, dir: true }) });
+    if (r.error){ setStatus(r.error, false); return; }
+    setStatus("created " + r.saved, true); loadSaved();
+  });
+}
+// Move / rename a folder; open tabs bound to files inside it follow.
+function moveFolder(p){
+  openDlg("Move folder", p.replace(/[^/]*$/, ""), p.replace(/^.*\//, ""), async to => {
+    const r = await api("/api/payloads", { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ from: p, to }) });
+    if (r.error){ setStatus(r.error, false); return; }
+    tabs.forEach(t => { if (t.file && t.file.startsWith(p + "/")) t.file = to + t.file.slice(p.length); }); saveTab();
+    setStatus("moved to " + r.moved, true); loadSaved();
+  });
 }
 async function deleteSaved(name, isDir){
   if (!confirm("delete " + name + (isDir ? "/ and everything in it?" : "?"))) return;
@@ -544,6 +554,7 @@ async function loadSaved(){
     return '<details class="f" data-p="' + esc(p) + '"' + (closed.has(p) ? '' : ' open') + '><summary><span class="fn">' + esc(d) + '</span><span class="types">' + count(n.dirs[d]) + '</span>' +
       '<span class="acts"><span title="save the current request into this folder" onclick="event.preventDefault();saveAs(this.closest(\'details\').dataset.p+\'/\')">+ req</span>' +
       '<span title="new folder inside" onclick="event.preventDefault();newFolder(this.closest(\'details\').dataset.p+\'/\')">+ folder</span>' +
+      '<span title="move / rename this folder" onclick="event.preventDefault();moveFolder(this.closest(\'details\').dataset.p)">⇢</span>' +
       '<span class="x" title="delete this folder and everything in it" onclick="event.preventDefault();deleteSaved(this.closest(\'details\').dataset.p, true)">×</span></span></summary>' +
       '<div class="kids">' + render(n.dirs[d], p + "/") + '</div></details>'; }).join("") +
     (path === "" && n.reqs.length && Object.keys(n.dirs).length ? '<div class="svc" title="requests not in any collection">ungrouped</div>' : '') +

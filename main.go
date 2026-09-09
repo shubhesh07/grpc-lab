@@ -759,6 +759,24 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": "name must be [A-Za-z0-9._-]{1,64} per segment, e.g. collection/folder/name"})
 			return
 		}
+		// A folder (collection) moves with everything in it.
+		if st, err := os.Stat(filepath.Join(*payloadDir, from)); err == nil && st.IsDir() {
+			if strings.HasPrefix(to+"/", from+"/") && from != to {
+				writeJSON(w, map[string]any{"error": "cannot move a folder into itself"})
+				return
+			}
+			if _, err := os.Stat(filepath.Join(*payloadDir, to)); err == nil && from != to {
+				writeJSON(w, map[string]any{"error": to + " already exists"})
+				return
+			}
+			_ = os.MkdirAll(filepath.Dir(filepath.Join(*payloadDir, to)), 0o755)
+			if err := os.Rename(filepath.Join(*payloadDir, from), filepath.Join(*payloadDir, to)); err != nil {
+				writeJSON(w, map[string]any{"error": err.Error()})
+				return
+			}
+			writeJSON(w, map[string]any{"moved": to + "/"})
+			return
+		}
 		if _, err := os.Stat(filepath.Join(*payloadDir, to+".json")); err == nil && from != to {
 			writeJSON(w, map[string]any{"error": to + ".json already exists"})
 			return

@@ -176,8 +176,9 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   headers and body — back to the file the tab was opened from
   (`{"grpc-lab": {addr, tls, method, headers}, "body": {...}}`); **Save as…**
   opens a dialog with a folder picker (existing folders suggested, typing a
-  new path creates it) and a name. `⇢` on a request moves or renames it, open
-  tabs follow. The token is never written (these files get committed). Older
+  new path creates it) and a name; `+ collection` and `+ folder` use the same
+  dialog. `⇢` on a request or a folder moves or renames it (a folder takes
+  everything inside it), and open tabs follow. The token is never written (these files get committed). Older
   body-only files still load. A saved request opens in its own tab, which
   shows a `●` when it has unsaved changes. Each tab has its own target, method,
   body and response.

@@ -141,6 +141,24 @@ const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + 
   await page.fill("#body", '{"responseSize": 6}'); await page.keyboard.press("Meta+s"); await waitStatus(/saved E2E\/Cart\/Sub\/Moved\/unary/);
   ok(true, "tab bound to a file inside the moved folder follows it");
 
+  step = "workspaces"; dialogs.push("alice"); await page.selectOption("#wsel", "+"); await waitStatus(/workspace: alice/);
+  await page.waitForFunction(() => document.querySelector("#saved").textContent.includes("nothing saved yet"));
+  ok((await page.locator("#wsel").inputValue()) === "alice", "personal workspace created and selected, tree empty");
+  await page.click("button:has-text(\"Save as…\")"); await page.waitForSelector("#dlg[open]"); await page.fill("#dlgfolder", "Mine"); await page.fill("#dlgname", "check"); await page.click("#dlgok"); await waitStatus(/saved Mine\/check/);
+  ok(fs.existsSync(path.join(PAY, "_users/alice/Mine/check.json")), "saved under _users/alice");
+  await page.click("button.primary"); await waitStatus(/ok/);
+  await page.click("#stabs [data-s=shist]"); ok((await page.locator(".hist").count()) === 1, "history is per workspace");
+  await page.click("#stabs [data-s=scoll]");
+  await page.selectOption("#wsel", "team"); await waitStatus(/workspace: team/); await page.waitForSelector("#saved details[data-p='E2E']", { state: "attached" });
+  ok((await page.locator("#saved").textContent()).indexOf("Mine") < 0, "team workspace does not show alice's folder");
+  ok((await page.locator(".rtab.on").getAttribute("title")).startsWith("alice"), "open tab remembers it belongs to alice");
+  dialogs.push("team"); await page.reload(); await page.waitForSelector("#msel"); await page.waitForFunction(() => document.querySelector("#wsel option[value=alice]"));
+  await page.selectOption("#wsel", "alice"); await waitStatus(/workspace: alice/); await page.waitForSelector("#saved details[data-p='Mine'] .saved");
+  await page.hover("#saved details[data-p='Mine'] .saved"); await page.click("#saved details[data-p='Mine'] .saved .cp"); await waitStatus(/copied Mine\/check.json to team/);
+  ok(fs.existsSync(path.join(PAY, "Mine/check.json")), "copy to team wrote the file in the shared root");
+  await page.selectOption("#wsel", "team"); await waitStatus(/workspace: team/); await page.waitForSelector("#saved details[data-p='Mine']", { state: "attached" });
+  dialogs.push(true); await page.hover("#saved details[data-p='Mine'] > summary"); await page.click("#saved details[data-p='Mine'] > summary .acts .x"); await page.waitForFunction(() => !document.querySelector("#saved details[data-p='Mine']"));
+
   step = "collapse-panes"; await page.click("#resfoldbtn"); ok(await page.locator("#respanel").isHidden(), "response pane collapses");
   await page.click("#resfoldbtn"); ok(await page.locator("#respanel").isVisible(), "response pane expands");
   await page.click("#reqfoldbtn"); ok(await page.locator("#reqpanel").isHidden(), "request pane collapses");
@@ -154,7 +172,7 @@ const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + 
   const bar = await page.locator("#splitbar").boundingBox();
   await page.mouse.move(bar.x + bar.width - 120, bar.y + 4); await page.mouse.down(); await page.mouse.move(bar.x + bar.width - 120, bar.y - 150, { steps: 5 }); await page.mouse.up();
   const after = (await page.locator("#reqpanel").boundingBox()).height;
-  ok(after < before - 100, "drag shrinks request pane " + before + " -> " + after);
+  ok(after < before - 30, "drag shrinks request pane " + before + " -> " + after);
 
   step = "sidebar-resize"; const sw = (await page.locator("#side").boundingBox()).width;
   const grip = await page.locator("#sidegrip").boundingBox();

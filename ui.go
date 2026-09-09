@@ -8,77 +8,101 @@ const indexHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>grpc-lab</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1115'/%3E%3Ctext x='16' y='22' font-size='17' font-family='Menlo,monospace' font-weight='700' text-anchor='middle' fill='%235eead4'%3Eg%3C/text%3E%3C/svg%3E">
 <style>
-:root{--bg:#0f1115;--panel:#161a21;--line:#252b36;--fg:#d7dce5;--dim:#8b95a7;--acc:#5eead4;--err:#f87171;--ok:#4ade80;--warn:#fbbf24}
+:root{--ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+--bg:#0b0d12;--sidebg:#10131a;--panel:#151a23;--field:#0d1016;--hover:#1b2130;--line:#232a36;--fg:#e6e9ef;--dim:#8a93a6;--acc:#2dd4bf;--acc-ink:#04231f;--acc-soft:#153531;--err:#f87171;--err-soft:#3a1d1d;--ok:#34d399;--ok-soft:#153327;--warn:#fbbf24;
+--k:#7dd3fc;--s:#86efac;--n:#fb923c;--b:#f0abfc;--shadow:0 10px 30px rgba(0,0,0,.45)}
+@media (prefers-color-scheme:light){:root{--bg:#f4f6f9;--sidebg:#ffffff;--panel:#ffffff;--field:#ffffff;--hover:#eef1f5;--line:#e1e5ec;--fg:#1a1f2b;--dim:#6b7484;--acc:#0d9488;--acc-ink:#ffffff;--acc-soft:#d9f3ef;--err:#dc2626;--err-soft:#fde8e8;--ok:#059669;--ok-soft:#dcf7ec;--warn:#b45309;--k:#0369a1;--s:#15803d;--n:#c2410c;--b:#7e22ce;--shadow:0 10px 30px rgba(20,30,50,.15)}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
-input,textarea,select,button{font:inherit;color:var(--fg);background:#0c0e12;border:1px solid var(--line);border-radius:6px;padding:6px 9px}
-input:focus,textarea:focus,select:focus{outline:1px solid var(--acc)}
-button{cursor:pointer;background:#1d2530}
-button:hover{border-color:var(--acc)}
-button.primary{background:var(--acc);color:#062723;border-color:var(--acc);font-weight:600}
-button.small{padding:2px 7px;font-size:11px}
-label.chk{color:var(--dim);font-size:11px;display:flex;gap:4px;align-items:center;white-space:nowrap}
-/* Postman-style: sidebar | workspace (tabs / target+method bar / request / response stacked) */
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 var(--ui);-webkit-font-smoothing:antialiased}
+input,textarea,select,button{font:inherit;color:var(--fg);background:var(--field);border:1px solid var(--line);border-radius:7px;padding:6px 10px}
+textarea,pre,code,kbd,#reqtree,#body,.mtag,.badge,.types,.hist,.svc,#sel{font-family:var(--mono)}
+input:focus,textarea:focus,select:focus{outline:2px solid var(--acc);outline-offset:-1px;border-color:transparent}
+select{appearance:none;-webkit-appearance:none;padding-right:26px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a93a6' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-color:var(--field)}
+button{cursor:pointer;background:var(--panel);transition:background .12s,border-color .12s,color .12s}
+button:hover{background:var(--hover);border-color:var(--dim)}
+button:active{transform:translateY(.5px)}
+button:disabled{opacity:.6;cursor:progress}
+button.primary{background:var(--acc);color:var(--acc-ink);border-color:var(--acc);font-weight:600;padding:6px 14px}
+button.primary:hover{filter:brightness(1.08)}
+button.small{padding:3px 8px;font-size:12px;border-radius:6px}
+button.ghost{background:transparent;border-color:transparent;color:var(--dim)}button.ghost:hover{background:var(--hover);color:var(--fg)}
+label.chk{color:var(--dim);font-size:12px;display:flex;gap:6px;align-items:center;white-space:nowrap}
+kbd{font-size:10px;color:inherit;opacity:.7;margin-left:4px}
+code{color:var(--acc);font-size:11.5px}
+h3{margin:16px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);display:flex;gap:8px;align-items:center;font-weight:600}
+/* ---- layout: sidebar | workspace (request tabs / target bar / request / response) ---- */
 main{display:grid;grid-template-columns:var(--side,300px) 1fr;height:100vh}
-#side{overflow:auto;padding:10px 12px;border-right:1px solid var(--line);background:var(--panel);position:relative}
-#sidegrip{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize}#sidegrip:hover{background:var(--acc);opacity:.4}
-#work{display:grid;grid-template-rows:auto auto auto minmax(140px,var(--split,1fr)) auto minmax(140px,1fr);min-width:0;overflow:hidden}
-/* collapse states: a pane folds to its header row, the other takes the space */
-/* (the pane stays in the grid -- display:none would shift the rows below it) */
+#side{overflow:auto;padding:12px 12px 16px;border-right:1px solid var(--line);background:var(--sidebg);position:relative}
+#sidegrip{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize}#sidegrip:hover{background:var(--acc);opacity:.35}
+main.noside{grid-template-columns:0 1fr}main.noside #side{display:none}
+#work{display:grid;grid-template-rows:auto auto auto minmax(140px,var(--split,1fr)) auto minmax(140px,1fr);min-width:0;overflow:hidden;background:var(--bg)}
 #work.noreq{grid-template-rows:auto auto auto 0 auto 1fr}#work.noreq #reqpanel{visibility:hidden;overflow:hidden;padding:0;min-height:0}
 #work.nores{grid-template-rows:auto auto auto 1fr auto 0}#work.nores #respanel{visibility:hidden;overflow:hidden;padding:0;min-height:0;border:0}
-main.noside{grid-template-columns:0 1fr}main.noside #side{display:none}
-#splitbar{cursor:row-resize;user-select:none}#work.noreq #splitbar,#work.nores #splitbar{cursor:default}
-.foldbtn{font-size:11px;padding:2px 6px}
-#reqpanel,#respanel{overflow:auto;padding:0 12px;display:flex;flex-direction:column;min-height:0}
-#respanel{border-top:1px solid var(--line);padding-top:8px}
+#reqpanel,#respanel{overflow:auto;padding:0 14px;display:flex;flex-direction:column;min-height:0}
+#respanel{border-top:1px solid var(--line);padding-top:10px}
 #pbody{flex:1;display:flex;flex-direction:column;min-height:0}
 #body,#reqtree{flex:1;min-height:120px}
 #respanel pre{flex:1;min-height:100px}
-.urlbar{display:flex;gap:8px;align-items:center;padding:6px 12px 8px}
-.urlbar #addr{width:220px}.urlbar select{flex:1;min-width:0}
-h3{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);display:flex;gap:8px;align-items:center}
-.svc{color:var(--dim);margin-top:10px;font-size:11px;word-break:break-all}
-.m{padding:4px 8px;border-radius:5px;cursor:pointer;word-break:break-all;display:flex;gap:6px;align-items:center}
-.m:hover{background:#1b212b}
-.m.sel{background:#1d3b38;color:var(--acc)}
-.badge{font-size:9px;padding:0 5px;border-radius:4px;border:1px solid var(--line);color:var(--warn);flex:none}
-textarea{width:100%;resize:vertical;white-space:pre;overflow:auto;tab-size:2}#body{resize:none}
-textarea.aux{height:160px;font-size:12px;margin-bottom:8px}
-#pset label.chk{font-size:12px;margin:8px 0;white-space:normal}#pset label.chk input{margin-right:6px}
-code{color:var(--acc);font-size:11px}
-.tabs button .cnt{color:var(--warn);font-size:10px;margin-left:4px}
-pre{white-space:pre-wrap;word-break:break-word;background:#0c0e12;border:1px solid var(--line);border-radius:6px;padding:10px;margin:0 0 10px;overflow:auto}
+#splitbar{cursor:row-resize;user-select:none}#work.noreq #splitbar,#work.nores #splitbar{cursor:default}
+.foldbtn{font-size:11px;padding:2px 7px}
+.brand{font-weight:700;letter-spacing:.2px;font-size:14px;display:flex;align-items:center;gap:8px}
+.brand i{display:inline-block;width:22px;height:22px;border-radius:6px;background:var(--acc);color:var(--acc-ink);font:700 13px/22px var(--mono);text-align:center;font-style:normal}
+/* request tabs across the top */
+.rtabs{display:flex;gap:4px;align-items:flex-end;padding:8px 14px 0;border-bottom:1px solid var(--line);overflow-x:auto;background:var(--sidebg)}
+.rtab{padding:6px 12px;border:1px solid transparent;border-bottom:0;border-radius:8px 8px 0 0;cursor:pointer;color:var(--dim);font-size:12.5px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none;transition:background .12s}
+.rtab:hover{background:var(--hover);color:var(--fg)}
+.rtab.on{color:var(--fg);background:var(--bg);border-color:var(--line);position:relative;top:1px;font-weight:600}
+.rtab .x{margin-left:8px;opacity:.45}.rtab .x:hover{opacity:1;color:var(--err)}.rtab .dot{color:var(--warn);margin-left:5px}
+.rtabs>button{margin:0 0 5px 2px}
+/* target bar */
+.urlbar{display:flex;gap:8px;align-items:center;padding:10px 14px 8px}
+.urlbar #addr{width:230px;font-family:var(--mono)}.urlbar select{flex:1;min-width:0;font-family:var(--mono)}
+/* underline tabs (Body / Metadata … and Response / Describe …) */
+.tabs{display:flex;gap:2px}.tabs button{background:transparent;border:0;border-bottom:2px solid transparent;border-radius:0;padding:5px 10px;color:var(--dim);font-weight:500}
+.tabs button:hover{color:var(--fg);background:transparent}.tabs button.on{color:var(--fg);border-bottom-color:var(--acc)}
+.tabs button .cnt{color:var(--warn);font-size:10px;margin-left:5px;font-weight:600}
 .row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
 .grow{flex:1;min-width:120px}
-.pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim);word-break:break-all}
-.pill.ok{color:var(--ok);border-color:#1e4634}.pill.err{color:var(--err);border-color:#4a2020}
-#status{max-width:45%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default}
-dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:16px 18px;min-width:380px}dialog::backdrop{background:rgba(0,0,0,.55)}
-dialog label{display:block;font-size:11px;color:var(--dim);margin:8px 0}dialog label input{display:block;width:100%;margin-top:3px;font-size:13px}
-/* collection tree: native <details> per folder, rows for requests */
-details.f{margin:0}details.f>summary{list-style:none;display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:5px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--fg)}
-details.f>summary::before{content:"\25B8";color:var(--dim);width:10px;font-size:10px}details.f[open]>summary::before{content:"\25BE"}
-details.f>summary:hover{background:#1b212b}details.f>summary .acts{margin-left:auto;opacity:0;display:flex;gap:6px;color:var(--dim);font-size:11px}details.f>summary:hover .acts{opacity:1}
-.acts span:hover{color:var(--acc)}.acts span.x:hover{color:var(--err)}
+.pill{font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--dim);background:var(--panel)}
+.pill.ok{color:var(--ok);border-color:transparent;background:var(--ok-soft)}.pill.err{color:var(--err);border-color:transparent;background:var(--err-soft)}
+#status{max-width:45%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;font-family:var(--mono)}
+.types{color:var(--dim);font-size:11px}
+/* sidebar: methods */
+.svc{color:var(--dim);margin-top:10px;font-size:11px;word-break:break-all}
+.m{padding:4px 8px;border-radius:6px;cursor:pointer;word-break:break-all;display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:12px}
+.m:hover{background:var(--hover)}.m.sel{background:var(--acc-soft);color:var(--acc)}
+.badge{font-size:9px;padding:0 5px;border-radius:4px;border:1px solid var(--line);color:var(--warn);flex:none}
+/* sidebar: collection tree */
+details.f{margin:0}details.f>summary{list-style:none;display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:6px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--fg)}
+details.f>summary::-webkit-details-marker{display:none}
+details.f>summary::before{content:"";width:12px;height:12px;flex:none;background:var(--dim);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M4 2l4 4-4 4' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M4 2l4 4-4 4' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;transition:transform .12s}
+details.f[open]>summary::before{transform:rotate(90deg)}
 details.f>summary .fn{font-weight:600}details.f>summary .types{margin-left:2px}
-.kids{margin-left:9px;padding-left:8px;border-left:1px solid var(--line)}
-.saved{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);display:flex;align-items:center;gap:6px;font-size:12px}
+details.f>summary:hover{background:var(--hover)}details.f>summary .acts{margin-left:auto;opacity:0;display:flex;gap:8px;color:var(--dim);font-size:11px}details.f>summary:hover .acts{opacity:1}
+.acts span:hover{color:var(--acc)}.acts span.x:hover{color:var(--err)}
+.kids{margin-left:11px;padding-left:8px;border-left:1px solid var(--line)}
+.saved{padding:4px 8px;border-radius:6px;cursor:pointer;color:var(--dim);display:flex;align-items:center;gap:7px;font-size:12.5px}
 .saved>span:nth-child(2){flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
-.mtag{flex:none;font-size:9px;padding:0 5px;border-radius:4px;background:#12302d;color:var(--acc);max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mtag.none{background:#1d2530;color:var(--dim)}
-.saved:hover{background:#1b212b;color:var(--fg)}.saved.on{background:#1d3b38;color:var(--acc)}
-.saved .x{color:var(--dim);opacity:.5}.saved .x:hover{color:var(--err);opacity:1}.saved .mv{opacity:0}.saved:hover .mv{opacity:.5}.saved .mv:hover{color:var(--acc);opacity:1}
-.hist{padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--dim);font-size:11px;display:flex;justify-content:space-between;gap:6px}
+.saved:hover{background:var(--hover)}.saved.on{background:var(--acc-soft)}.saved.on>span:nth-child(2){color:var(--acc)}
+.saved .x{color:var(--dim);opacity:.5;font-size:12px}.saved .x:hover{color:var(--err);opacity:1}.saved .mv{opacity:0}.saved:hover .mv{opacity:.55}.saved .mv:hover{color:var(--acc);opacity:1}
+.mtag{flex:none;font-size:9.5px;padding:1px 6px;border-radius:4px;background:var(--acc-soft);color:var(--acc);max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.mtag.none{background:var(--hover);color:var(--dim)}
+/* sidebar: history */
+.hist{padding:4px 8px;border-radius:6px;cursor:pointer;color:var(--dim);font-size:11.5px;display:flex;justify-content:space-between;gap:6px}
 .hist>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hist .x{opacity:.4;font-size:9px}.hist:hover .x{opacity:1}.hist .x:hover{color:var(--acc)}
-.hist:hover{background:#1b212b;color:var(--fg)}
+.hist .x{opacity:.4;font-size:10px}.hist:hover .x{opacity:1}.hist .x:hover{color:var(--acc)}
+.hist:hover{background:var(--hover);color:var(--fg)}
 .hist.ok::before{content:"● ";color:var(--ok)}.hist.err::before{content:"● ";color:var(--err)}
-.rtabs{display:flex;gap:2px;align-items:flex-end;padding:8px 12px 0;border-bottom:1px solid var(--line);overflow-x:auto}.rtab{padding:5px 10px;border:1px solid var(--line);border-bottom:0;border-radius:6px 6px 0 0;cursor:pointer;color:var(--dim);font-size:12px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}.rtab.on{color:var(--acc);background:var(--bg);border-color:var(--acc)}.rtab .x{margin-left:6px;opacity:.5}.rtab .x:hover{opacity:1;color:var(--err)}.rtab .dot{color:var(--warn);margin-left:4px}
-.tabs{display:flex;gap:2px}.tabs button{border-radius:6px 6px 0 0;border-bottom:0}.tabs button.on{background:#0c0e12;color:var(--acc)}
-.anyrow{display:flex;gap:6px;align-items:center;margin:4px 0;font-size:12px}
-.anyrow .p{color:var(--warn);flex:none}
+/* editors */
+textarea{width:100%;resize:vertical;white-space:pre;overflow:auto;tab-size:2;line-height:1.5}#body{resize:none;font-size:13px;padding:10px 12px}
+textarea.aux{height:160px;font-size:12.5px;margin-bottom:8px}
+#pset label.chk{font-size:12.5px;margin:10px 0;white-space:normal}#pset label.chk input{margin-right:6px}
+pre{white-space:pre-wrap;word-break:break-word;background:var(--field);border:1px solid var(--line);border-radius:8px;padding:12px;margin:0 0 12px;overflow:auto;font-size:12.5px;line-height:1.5}
+#lint.bad{color:var(--err)}#lint.good{color:var(--ok)}
+#reqtree{border:1px solid var(--line);border-radius:8px;background:var(--field);padding:10px;overflow:auto;font-size:12.5px}
+.hintline{color:var(--dim);font-size:11.5px;margin:4px 0}
+.anyrow{display:flex;gap:6px;align-items:center;margin:4px 0;font-size:12px}.anyrow .p{color:var(--warn);flex:none;font-family:var(--mono)}.anyrow .p.bad{color:var(--err)}
 details{margin-bottom:8px}summary{cursor:pointer;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
-.anyrow .p.bad{color:var(--err)}
 details.t{margin:0}details.t>summary{cursor:pointer;list-style:none;text-transform:none;font-size:inherit;letter-spacing:0;color:inherit;white-space:pre}
 details.t>summary::before{content:"\25BC";display:inline-block;width:14px;font-size:9px;color:var(--dim)}details.t:not([open])>summary::before{content:"\25B6"}
 details.t:not([open])>summary .cl{display:inline}details.t>summary .cl{display:none}details.t>summary .cnt{color:var(--dim);font-size:11px}details.t[open]>summary .cnt{display:none}
@@ -87,29 +111,29 @@ details.t:not([open])>summary .cl{display:inline}details.t>summary .cl{display:n
 .pen,.tog,.cnt,.del,details.t>summary::before{user-select:none;-webkit-user-select:none}
 .del{color:var(--dim);opacity:0;cursor:pointer;margin-left:8px;font-size:11px}.leaf:hover>.del,summary:hover>.del,.te:hover>.del{opacity:.6}.del:hover{opacity:1;color:var(--err)}
 .leaf:hover>.pen,summary:hover>.pen,.te:hover>.pen{opacity:.6}
-.leaf.selrow,.te.selrow,details.t>summary.selrow{background:#1d3b38;border-radius:4px}
+.leaf.selrow,.te.selrow,details.t>summary.selrow{background:var(--acc-soft);border-radius:4px}
 .pen{color:var(--dim);opacity:.35;cursor:pointer;margin-left:8px;font-size:11px}.pen:hover{opacity:1;color:var(--acc)}details.t>summary:hover .pen,.te:hover .pen{opacity:.8}
-.ed{display:block;width:100%;min-height:80px;margin:4px 0;white-space:pre;font:inherit}.edrow{margin:2px 0 6px}.edrow button{margin-right:6px}
-.leaf input.iv{padding:1px 4px;font:inherit;min-width:120px}
-.hintline{color:var(--dim);font-size:11px;margin:4px 0}
+.ed{display:block;width:100%;min-height:80px;margin:4px 0;white-space:pre;font:inherit;font-family:var(--mono)}.edrow{margin:2px 0 6px}.edrow button{margin-right:6px}
+.leaf input.iv{padding:1px 4px;font:inherit;font-family:var(--mono);min-width:120px}
 .tog{color:var(--dim);opacity:0;cursor:pointer;margin-right:6px;font-size:11px}.leaf:hover>.tog,summary:hover>.tog,.te:hover>.tog{opacity:.6}.tog:hover,.tog.on{opacity:1;color:var(--warn)}.off,.k.off{color:var(--dim);text-decoration:line-through;opacity:.7}
-#body{font-size:13px;line-height:1.45;tab-size:2}
-#lint.bad{color:var(--err)}#lint.good{color:var(--ok)}
-#reqtree{border:1px solid var(--line);border-radius:6px;background:#0c0e12;padding:8px;overflow:auto}
-.k{color:#7dd3fc}.s{color:#86efac}.n{color:#fb923c}.b{color:#f0abfc}
-kbd{font-size:10px;color:var(--dim)}
-.types{color:var(--dim);font-size:11px}
+.k{color:var(--k)}.s{color:var(--s)}.n{color:var(--n)}.b{color:var(--b)}
+/* dialog + toast */
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:20px 22px;min-width:400px;box-shadow:var(--shadow)}dialog::backdrop{background:rgba(0,0,0,.5);backdrop-filter:blur(2px)}
+dialog h3{margin:0 0 12px;font-size:14px;text-transform:none;letter-spacing:0;color:var(--fg)}
+dialog label{display:block;font-size:12px;color:var(--dim);margin:10px 0}dialog label input{display:block;width:100%;margin-top:4px;font-size:13px}
+#toast{position:fixed;right:18px;bottom:18px;padding:9px 14px;border-radius:9px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);font-size:12.5px;max-width:420px;opacity:0;transform:translateY(8px);transition:opacity .18s,transform .18s;pointer-events:none;z-index:10}
+#toast.show{opacity:1;transform:none}#toast.ok{border-color:var(--ok);color:var(--ok)}#toast.err{border-color:var(--err);color:var(--err)}
 </style></head><body>
 <main>
   <section id="side">
-    <div class="row" style="margin-bottom:6px"><b style="color:var(--acc);letter-spacing:.5px">grpc-lab</b><span id="hint" class="pill" style="margin-left:auto">reflection</span></div>
+    <div class="row" style="margin-bottom:8px"><span class="brand"><i>g</i>grpc-lab</span><span id="hint" class="pill" style="margin-left:auto">reflection</span></div>
     <div class="tabs" id="stabs"><button class="on" data-s="scoll" onclick="stab('scoll')">Collections</button><button data-s="smeth" onclick="stab('smeth')">Methods</button><button data-s="shist" onclick="stab('shist')">History</button></div>
     <div id="scoll">
-      <div class="row" style="margin:8px 0 4px"><button class="small" onclick="newFolder('')" title="a collection is a folder under payloads/">+ collection</button></div>
+      <div class="row" style="margin:10px 0 6px"><select id="wsel" onchange="pickWs(this.value)" title="workspace: 'team' is shared by everyone on this instance; a personal workspace keeps your collections and history apart" style="flex:1;min-width:0"></select><button class="small" onclick="newFolder('')" title="a collection is a folder in this workspace">+ collection</button></div>
       <div id="saved"></div>
     </div>
     <div id="smeth" style="display:none">
-      <input id="filter" placeholder="filter methods…" style="width:100%;margin-top:8px" oninput="renderMethods()">
+      <input id="filter" placeholder="filter methods…" style="width:100%;margin-top:10px" oninput="renderMethods()">
       <div id="methods" style="margin-top:6px">loading…</div>
       <h3>Type sources <button class="small" onclick="addTypeSource()" title="pull descriptors from another server so its types decode inside Any">+ server</button> <button class="small" onclick="$('psfile').click()" title="upload a .proto (compiled here with protoc) or a .protoset built with buf/protoc">+ file</button><input type="file" id="psfile" accept=".proto,.protoset,.binpb,.pb,.desc" style="display:none" onchange="uploadTypeSource(this)"></h3><div id="typesources"></div>
     </div>
@@ -121,19 +145,19 @@ kbd{font-size:10px;color:var(--dim)}
   <section id="work">
     <div class="rtabs" id="rtabs"></div>
     <div class="urlbar">
-      <button class="small" onclick="toggleSide()" title="show / hide the sidebar (⌘B)">☰</button>
+      <button class="small ghost" onclick="toggleSide()" title="show / hide the sidebar (⌘B)">☰</button>
       <input id="addr" value="{{ADDR}}" title="target host:port (reflection must be on)">
-      <button class="small" onclick="loadMethods(true)" title="reload services from reflection">↻</button>
+      <button class="small ghost" onclick="loadMethods(true)" title="reload services from reflection">↻</button>
       <select id="msel" onchange="pick(this.value)" title="Service / Method"><option value="">select a method…</option></select>
-      <button class="primary" onclick="invoke()">Invoke <kbd>⌃⏎</kbd></button>
+      <button class="primary" id="sendbtn" onclick="invoke()">Invoke <kbd>⌃⏎</kbd></button>
     </div>
-    <div class="row" style="padding:0 12px;margin-bottom:6px">
+    <div class="row" style="padding:0 14px;margin-bottom:8px;border-bottom:1px solid var(--line)">
       <div class="tabs" id="ptabs"><button class="on" data-p="pbody" onclick="ptab('pbody')">Body</button><button data-p="pmeta" onclick="ptab('pmeta')">Metadata</button><button data-p="pauth" onclick="ptab('pauth')">Auth</button><button data-p="pset" onclick="ptab('pset')">Settings</button></div>
       <span id="sel" class="types"></span>
       <button class="small" style="margin-left:auto" onclick="save()" title="save to this tab's file (⌘S); asks for a name the first time">Save</button>
       <button class="small" onclick="saveAs()" title="save under a new name: name, or collection/folder/name">Save as…</button>
       <button class="small" onclick="pasteCurl()" title="paste a grpcurl command: target, headers, body and method are filled in">Paste grpcurl</button>
-      <button class="small foldbtn" id="reqfoldbtn" onclick="foldPane('req')" title="collapse / expand the request pane">▾</button>
+      <button class="small ghost foldbtn" id="reqfoldbtn" onclick="foldPane('req')" title="collapse / expand the request pane">▾</button>
     </div>
     <div id="reqpanel">
       <div id="pbody">
@@ -164,14 +188,14 @@ kbd{font-size:10px;color:var(--dim)}
         <label class="chk"><input type="checkbox" id="verbose">verbose (<code>-v</code>: response headers and trailers)</label>
       </div>
     </div>
-    <div class="row" id="splitbar" style="padding:8px 12px 0;margin:0;border-top:1px solid var(--line)" title="drag to resize request / response">
+    <div class="row" id="splitbar" style="padding:8px 14px 0;margin:0;border-top:1px solid var(--line)" title="drag to resize request / response">
       <div class="tabs"><button class="on" data-t="out" onclick="tab('out')">Response</button><button data-t="desc" onclick="tab('desc')">Describe</button><button data-t="cmd" onclick="tab('cmd')">grpcurl</button></div>
       <span id="status" class="pill">idle</span>
-      <button class="small" id="treebtn" onclick="treeMode=!treeMode;renderOut()">raw</button>
-      <button class="small" onclick="foldAll(false)">collapse</button>
-      <button class="small" onclick="foldAll(true)">expand</button>
-      <button class="small" onclick="copyOut()" title="copy the visible tab: response, describe or grpcurl command">copy</button>
-      <button class="small foldbtn" id="resfoldbtn" style="margin-left:auto" onclick="foldPane('res')" title="collapse / expand the response pane">▾</button>
+      <button class="small ghost" id="treebtn" onclick="treeMode=!treeMode;renderOut()">raw</button>
+      <button class="small ghost" onclick="foldAll(false)">collapse</button>
+      <button class="small ghost" onclick="foldAll(true)">expand</button>
+      <button class="small ghost" onclick="copyOut()" title="copy the visible tab: response, describe or grpcurl command">copy</button>
+      <button class="small ghost foldbtn" id="resfoldbtn" style="margin-left:auto" onclick="foldPane('res')" title="collapse / expand the response pane">▾</button>
     </div>
     <div id="respanel">
       <pre id="out">—</pre>
@@ -180,6 +204,7 @@ kbd{font-size:10px;color:var(--dim)}
     </div>
   </section>
 </main>
+<div id="toast"></div>
 <datalist id="typelist"></datalist>
 <datalist id="folderlist"></datalist>
 <dialog id="dlg"><form method="dialog" onsubmit="dlgOk(event)">
@@ -201,7 +226,10 @@ try { const t = JSON.parse(ls.get("tabs") || "null"); if (t && t.tabs && t.tabs.
 if (!tabs.length) tabs = [{ method: "", body: "" }];
 const addr = () => $("addr").value.trim();
 const conn = () => "addr=" + encodeURIComponent(addr()) + "&tls=" + ($("tls").checked ? 1 : 0);
-const api = async (url, opt) => (await fetch(url, opt)).json();
+// Workspace: "team" (shared root) or a personal name; sent with every request
+// so saved requests and history are kept apart per person on a shared box.
+let ws = "team";
+const api = async (url, opt, wsName) => { opt = opt || {}; opt.headers = Object.assign({ "X-Workspace": wsName || ws }, opt.headers || {}); return (await fetch(url, opt)).json(); };
 
 // ---- persistence: small conveniences survive a reload ----
 ["addr","token","headers","vars"].forEach(k => { if (ls.get(k)) $(k).value = ls.get(k); $(k).oninput = () => { ls.set(k, $(k).value); ptabBadges(); }; });
@@ -441,11 +469,13 @@ async function invoke(){
   scanAny(true);
   if (missing.length){ setStatus("Any without @type: " + missing.map(f => f.path).join(", ") + " -- fill it or delete the field", false); return; }
   setStatus("calling…", null); $("out").textContent = ""; tab("out");
-  const mine = tabs[cur];
+  const mine = tabs[cur], btn = $("sendbtn"); btn.disabled = true; btn.textContent = "Sending…";
   const r = await api("/api/invoke", { method: "POST", headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ addr: addr(), method, payload, token: $("token").value.trim(), headers: $("headers").value,
       tls: $("tls").checked, emitDefaults: $("emit").checked, verbose: $("verbose").checked }) });
-  const summary = { t: (r.ok ? "ok" : "error" + codeName(r.output)) + " · " + (r.ms||0) + "ms", ok: r.ok };
+  btn.disabled = false; btn.innerHTML = "Invoke <kbd>⌃⏎</kbd>";
+  const size = (r.output || "").length, sz = size < 1024 ? size + " B" : (size / 1024).toFixed(1) + " KB";
+  const summary = { t: (r.ok ? "ok" : "error" + codeName(r.output)) + " · " + (r.ms||0) + "ms · " + sz, ok: r.ok };
   if (tabs[cur] !== mine){ Object.assign(mine, { out: r.output || r.error || "(no output)", cmd: r.command || "", status: summary }); loadHistory(); return; } // user switched tabs meanwhile: park the result on its tab
   lastOut = r.output || r.error || "(no output)"; renderOut();
   const un = /"@error":\s*"([\w.]+) is not recognized/.exec(lastOut);
@@ -492,7 +522,29 @@ async function restore(r){
 // "collection/folder/name". A tab remembers the file it was opened from or
 // saved to, so Save (⌘S) writes straight back; Save as… asks for a name.
 let lastCollection = ls.get("collection");
-function save(){ const t = tabs[cur]; return t.file ? saveTo(t.file.replace(/\.json$/, "")) : saveAs(); }
+function save(){ const t = tabs[cur]; return t.file ? saveTo(t.file.replace(/\.json$/, ""), t.ws) : saveAs(); }
+// ---- workspaces ----
+let workspaces = [];
+async function loadWorkspaces(){
+  const r = await api("/api/workspaces"); workspaces = r.workspaces || [];
+  if (ws !== "team" && !workspaces.includes(ws)) workspaces.push(ws);
+  $("wsel").innerHTML = ['<option value="team">team (shared)</option>'].concat(workspaces.sort().map(n => '<option value="' + esc(n) + '">' + esc(n) + '</option>')).join("") + '<option value="+">+ new workspace…</option>';
+  $("wsel").value = ws;
+}
+function pickWs(v){
+  if (v === "+"){ const n = (prompt("your workspace name (letters, digits, . _ -), e.g. your first name:") || "").trim(); $("wsel").value = ws; if (!n) return; if (!/^[A-Za-z0-9._-]{1,64}$/.test(n)){ setStatus("bad workspace name", false); return; } v = n; }
+  ws = v; ls.set("ws", ws); loadWorkspaces(); loadSaved(); loadHistory(); setStatus("workspace: " + ws, true);
+}
+// Copy a request (or a whole folder) into another workspace, e.g. team -> mine to tweak, mine -> team to share.
+async function copySaved(name, isDir, reqsAll){
+  const other = (prompt("copy to workspace (team, or a personal name):", ws === "team" ? (ls.get("lastws") || "") : "team") || "").trim(); if (!other || other === ws) return;
+  if (other !== "team") ls.set("lastws", other);
+  const items = isDir ? reqsAll.filter(p => p.name.startsWith(name + "/")) : reqsAll.filter(p => p.name === name);
+  let n = 0;
+  for (const p of items){ const r = await api("/api/payloads", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ name: p.name.replace(/\.json$/, ""), body: p.raw }) }, other); if (!r.error) n++; else setStatus(r.error, false); }
+  if (isDir && !items.length) await api("/api/payloads", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ name, dir: true }) }, other);
+  setStatus("copied " + (isDir ? n + " requests from " + name : name) + " to " + other, true); loadWorkspaces();
+}
 // Save as… / Move open a dialog with a folder picker (existing folders
 // suggested; typing a new path creates it) and a name.
 let folders = [], dlgAction = null;
@@ -517,12 +569,13 @@ function moveSaved(name){
     setStatus("moved to " + r.moved, true); loadSaved();
   });
 }
-async function saveTo(name){
-  const r = await api("/api/payloads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, body: packRequest() }) });
+async function saveTo(name, wsName){
+  wsName = wsName || ws;
+  const r = await api("/api/payloads", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name, body: packRequest() }) }, wsName);
   if(r.error){ setStatus(r.error, false); return; }
   lastCollection = name.includes("/") ? name.replace(/\/[^/]*$/, "") : ""; ls.set("collection", lastCollection);
-  tabs[cur].file = r.saved; tabs[cur].saved = $("body").value; saveTab();
-  setStatus("saved " + r.saved, true); loadSaved();
+  tabs[cur].file = r.saved; tabs[cur].ws = wsName; tabs[cur].saved = $("body").value; saveTab();
+  setStatus("saved " + r.saved + (wsName !== ws ? " in " + wsName : ""), true); loadSaved();
 }
 function newFolder(prefix){
   openDlg(prefix ? "New folder" : "New collection", prefix, "", async name => {
@@ -551,40 +604,44 @@ async function deleteSaved(name, isDir){
 // row per request. Hover a folder for + req / + folder / delete.
 async function loadSaved(){
   const r = await api("/api/payloads");
-  const reqs = (r.payloads||[]).map(p => Object.assign({ name: p.name }, unpackRequest(p.body)));
+  const reqs = (r.payloads||[]).map(p => Object.assign({ name: p.name, raw: p.body }, unpackRequest(p.body)));
+  savedReqs = reqs;
   const root = { dirs: {}, reqs: [] };
   const dir = path => path.split("/").filter(Boolean).reduce((n, s) => n.dirs[s] = n.dirs[s] || { dirs: {}, reqs: [] }, root);
   (r.folders||[]).forEach(dir); folders = (r.folders||[]).slice().sort();
   reqs.forEach((p, i) => dir(p.name.replace(/[^/]*$/, "")).reqs.push(i));
-  const closed = new Set((ls.get("closed") || "").split("\n").filter(Boolean)), curFile = tabs[cur] && tabs[cur].file;
+  const closed = new Set((ls.get("closed") || "").split("\n").filter(Boolean)), curFile = tabs[cur] && (tabs[cur].ws || "team") === ws ? tabs[cur].file : null;
   const count = n => n.reqs.length + Object.values(n.dirs).reduce((a, c) => a + count(c), 0);
   const render = (n, path) => Object.keys(n.dirs).sort().map(d => { const p = path + d;
     return '<details class="f" data-p="' + esc(p) + '"' + (closed.has(p) ? '' : ' open') + '><summary><span class="fn">' + esc(d) + '</span><span class="types">' + count(n.dirs[d]) + '</span>' +
       '<span class="acts"><span title="save the current request into this folder" onclick="event.preventDefault();saveAs(this.closest(\'details\').dataset.p+\'/\')">+ req</span>' +
       '<span title="new folder inside" onclick="event.preventDefault();newFolder(this.closest(\'details\').dataset.p+\'/\')">+ folder</span>' +
       '<span title="move / rename this folder" onclick="event.preventDefault();moveFolder(this.closest(\'details\').dataset.p)">⇢</span>' +
+      '<span title="copy this folder to another workspace" onclick="event.preventDefault();copySaved(this.closest(\'details\').dataset.p, true, savedReqs)">⧉</span>' +
       '<span class="x" title="delete this folder and everything in it" onclick="event.preventDefault();deleteSaved(this.closest(\'details\').dataset.p, true)">×</span></span></summary>' +
       '<div class="kids">' + render(n.dirs[d], p + "/") + '</div></details>'; }).join("") +
     (path === "" && n.reqs.length && Object.keys(n.dirs).length ? '<div class="svc" title="requests not in any collection">ungrouped</div>' : '') +
     n.reqs.map(i => { const p = reqs[i];
       return '<div class="saved' + (p.name === curFile ? " on" : "") + '" data-i="' + i + '" title="' + esc(p.method ? p.method + " @ " + p.addr : "body only (saved by an older version): method is not stored, pick it and Save") + '">' +
-        '<span class="mtag' + (p.method ? '' : ' none') + '">' + esc(p.method ? p.method.split(".").pop() : "body") + '</span><span>' + esc(p.name.replace(/^.*\//, "").replace(/\.json$/, "")) + '</span><span class="x mv" title="move / rename">⇢</span><span class="x" title="delete">×</span></div>'; }).join("");
+        '<span class="mtag' + (p.method ? '' : ' none') + '">' + esc(p.method ? p.method.split(".").pop() : "body") + '</span><span>' + esc(p.name.replace(/^.*\//, "").replace(/\.json$/, "")) + '</span><span class="x mv" title="move / rename">⇢</span><span class="x mv cp" title="copy to another workspace">⧉</span><span class="x" title="delete">×</span></div>'; }).join("");
   $("saved").innerHTML = render(root, "") || '<div class="hintline">nothing saved yet — <b>+ collection</b>, then <b>Save as…</b></div>';
   document.querySelectorAll("#saved details.f").forEach(d => d.ontoggle = () => { d.open ? closed.delete(d.dataset.p) : closed.add(d.dataset.p); ls.set("closed", [...closed].join("\n")); });
   document.querySelectorAll(".saved").forEach(el => {
     const p = reqs[+el.dataset.i];
     el.onclick = () => openSaved(p);
-    el.querySelector(".mv").onclick = e => { e.stopPropagation(); moveSaved(p.name); };
+    el.querySelector(".mv:not(.cp)").onclick = e => { e.stopPropagation(); moveSaved(p.name); };
+    el.querySelector(".cp").onclick = e => { e.stopPropagation(); copySaved(p.name, false, reqs); };
     el.querySelector(".x:not(.mv)").onclick = e => { e.stopPropagation(); deleteSaved(p.name.replace(/\.json$/, ""), false); };
   });
 }
 // A saved request opens in its own tab, Postman-style; an empty tab is reused,
 // and a tab already showing that file is just focused.
+let savedReqs = [];
 async function openSaved(p){
-  const i = tabs.findIndex(t => t.file === p.name);
+  const i = tabs.findIndex(t => t.file === p.name && (t.ws || "team") === ws);
   if (i >= 0){ if (i !== cur) await switchTab(i); }
   else if (tabs[cur].file || (tabs[cur].body || "").trim()) await newTab();
-  tabs[cur].file = p.name;
+  tabs[cur].file = p.name; tabs[cur].ws = ws;
   await restore(p);
   tabs[cur].saved = $("body").value; saveTab(); loadSaved(); // saved = as formatted, so the tab starts clean
 }
@@ -649,7 +706,7 @@ async function uploadTypeSource(inp){
   if (r.error){ setStatus(r.error, false); return; }
   setStatus("added type source " + name, true); loadTypeSources(); loadTypes(true);
 }
-async function clearHistory(){ await fetch("/api/history", { method: "DELETE" }); loadHistory(); }
+async function clearHistory(){ await api("/api/history", { method: "DELETE" }); loadHistory(); }
 
 // ---- request tabs ----
 // A tab is { addr, tls, method, body, file?, saved? }: each tab has its own
@@ -663,7 +720,7 @@ function saveTab(){ tabs[cur] = Object.assign(tabs[cur] || {}, { addr: addr(), t
 $("addr").addEventListener("change", () => { saveTab(); loadMethods(); });
 const tabTitle = t => t.file ? t.file.replace(/^.*\//, "").replace(/\.json$/, "") : t.method ? t.method.split(".").pop() : "new";
 function renderTabs(){
-  $("rtabs").innerHTML = tabs.map((t, i) => '<span class="rtab' + (i === cur ? " on" : "") + '" data-i="' + i + '" title="' + esc(t.file || t.method || "new request") + '">' + esc(tabTitle(t)) +
+  $("rtabs").innerHTML = tabs.map((t, i) => '<span class="rtab' + (i === cur ? " on" : "") + '" data-i="' + i + '" title="' + esc(t.file ? (t.ws || "team") + " › " + t.file : t.method || "new request") + '">' + esc(tabTitle(t)) +
     (t.file && t.saved != null && t.body !== t.saved ? '<span class="dot" title="unsaved changes (⌘S)">●</span>' : '') +
     (tabs.length > 1 ? '<span class="x" title="close">×</span>' : '') + '</span>').join("") + '<button class="small" onclick="newTab()" title="new request tab" style="margin-bottom:4px">+</button>';
   document.querySelectorAll(".rtab").forEach(el => {
@@ -756,7 +813,12 @@ function copy(t){
   if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(done, legacy); else legacy();
 }
 function copyOut(){ copy(curTab === "out" ? lastOut : $(curTab).textContent); }
-function setStatus(t, ok){ const s = $("status"); s.textContent = t; s.title = t; s.className = "pill" + (ok === true ? " ok" : ok === false ? " err" : ""); }
+let toastTimer = 0;
+function setStatus(t, ok){
+  const s = $("status"); s.textContent = t; s.title = t; s.className = "pill" + (ok === true ? " ok" : ok === false ? " err" : "");
+  // Errors and confirmations also surface as a toast, so nothing important hides in the small status pill.
+  if (ok === true || ok === false){ const x = $("toast"); x.textContent = t; x.className = "show " + (ok ? "ok" : "err"); clearTimeout(toastTimer); toastTimer = setTimeout(() => x.className = "", ok ? 2200 : 5000); }
+}
 function esc(s){ return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 // Collapsible JSON tree (JSON-Viewer style: arrows, guide lines, trailing
 // commas, everything expanded). editable=true makes leaf values double-click
@@ -870,6 +932,7 @@ document.addEventListener("keydown", e => {
   else if ((e.key === "Delete" || e.key === "Backspace") && selSegs && selSegs.length > 1){ e.preventDefault(); deleteNode(selSegs); }
 });
 
+ws = ls.get("ws") || "team"; loadWorkspaces();
 renderTabs(); ptabBadges();
 // Show the tab's body right away; the method list may take seconds if its
 // target is down, and the editor must not look empty meanwhile.

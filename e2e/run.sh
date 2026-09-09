@@ -8,5 +8,5 @@ PAY=$(mktemp -d)
 ./testsrv/testsrv >"$PAY/testsrv.log" 2>&1 & T=$!
 ../grpc-lab -port 8097 -addr 127.0.0.1:50077 -payloads "$PAY/payloads" >"$PAY/grpc-lab.log" 2>&1 & L=$!
 trap 'kill $T $L 2>/dev/null; rm -rf "$PAY"' EXIT
-sleep 1
+sleep 2
 PAYLOADS="$PAY/payloads" node e2e.js

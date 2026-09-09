@@ -98,6 +98,7 @@ func main() {
 	http.HandleFunc("/api/payloads", handlePayloads)
 	http.HandleFunc("/api/history", handleHistory)
 	http.HandleFunc("/api/typesources", handleTypeSources)
+	http.HandleFunc("/api/workspaces", handleWorkspaces)
 
 	addr := fmt.Sprintf("%s:%d", *bindHost, *uiPort)
 	log.Printf("grpc-lab  http://%s   target=%s   payloads=%s", addr, *defaultAddr, *payloadDir)
@@ -561,12 +562,38 @@ type historyEntry struct {
 
 var historyMu sync.Mutex
 
-func historyPath() string { return filepath.Join(*payloadDir, ".history.jsonl") }
+// wsDir is the payload directory for the caller's workspace: the shared
+// root ("team", the default) or payloads/_users/<name>. Set by the browser in
+// the X-Workspace header; there is no login, this only keeps people's saved
+// requests and history from colliding on a shared instance.
+func wsDir(r *http.Request) string {
+	name := r.Header.Get("X-Workspace")
+	if name == "" || name == "team" || !safeName.MatchString(name) {
+		return *payloadDir
+	}
+	dir := filepath.Join(*payloadDir, "_users", name)
+	_ = os.MkdirAll(dir, 0o755)
+	return dir
+}
 
-func appendHistory(e historyEntry) {
+// handleWorkspaces lists the user workspaces that exist on this instance.
+func handleWorkspaces(w http.ResponseWriter, r *http.Request) {
+	entries, _ := os.ReadDir(filepath.Join(*payloadDir, "_users"))
+	names := []string{}
+	for _, e := range entries {
+		if e.IsDir() && safeName.MatchString(e.Name()) {
+			names = append(names, e.Name())
+		}
+	}
+	writeJSON(w, map[string]any{"workspaces": names})
+}
+
+func historyPath(dir string) string { return filepath.Join(dir, ".history.jsonl") }
+
+func appendHistory(dir string, e historyEntry) {
 	historyMu.Lock()
 	defer historyMu.Unlock()
-	f, err := os.OpenFile(historyPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(historyPath(dir), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
@@ -577,15 +604,16 @@ func appendHistory(e historyEntry) {
 // handleHistory returns the most recent calls, newest first, so a request
 // from ten minutes ago is one click away instead of a rebuild.
 func handleHistory(w http.ResponseWriter, r *http.Request) {
+	dir := wsDir(r)
 	if r.Method == http.MethodDelete {
 		historyMu.Lock()
-		_ = os.Remove(historyPath())
+		_ = os.Remove(historyPath(dir))
 		historyMu.Unlock()
 		writeJSON(w, map[string]any{"cleared": true})
 		return
 	}
 	historyMu.Lock()
-	b, _ := os.ReadFile(historyPath())
+	b, _ := os.ReadFile(historyPath(dir))
 	historyMu.Unlock()
 	var entries []historyEntry
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
@@ -653,7 +681,7 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 		// grpcurl was killed, so it printed nothing; say why instead of showing a blank pane.
 		out = fmt.Sprintf("timed out after %s (-timeout flag)\n%s", *callTimeout, out)
 	}
-	appendHistory(historyEntry{At: started.Format(time.RFC3339), Addr: req.Addr, Method: req.Method, Payload: req.Payload, OK: err == nil, Ms: ms})
+	appendHistory(wsDir(r), historyEntry{At: started.Format(time.RFC3339), Addr: req.Addr, Method: req.Method, Payload: req.Payload, OK: err == nil, Ms: ms})
 
 	// Pasteable equivalent, with the body inline instead of on stdin.
 	cmdArgs := append(append([]string{"grpcurl"}, protosetArgs()...), args[:len(args)-4]...)
@@ -669,9 +697,10 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 // handlePayloads lists saved bodies on GET, saves one on POST and removes one
 // on DELETE, so a working request can be kept without leaving the browser.
 func handlePayloads(w http.ResponseWriter, r *http.Request) {
+	dir := wsDir(r)
 	switch r.Method {
 	case http.MethodGet:
-		entries, err := os.ReadDir(*payloadDir)
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
@@ -689,9 +718,9 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 		walk = func(prefix string, entries []os.DirEntry) {
 			for _, e := range entries {
 				if e.IsDir() {
-					if safeReqName(prefix+e.Name()) && !strings.HasPrefix(e.Name(), ".") {
+					if safeReqName(prefix+e.Name()) && !strings.HasPrefix(e.Name(), ".") && !strings.HasPrefix(e.Name(), "_") {
 						folders = append(folders, prefix+e.Name())
-						sub, _ := os.ReadDir(filepath.Join(*payloadDir, prefix, e.Name()))
+						sub, _ := os.ReadDir(filepath.Join(dir, prefix, e.Name()))
 						walk(prefix+e.Name()+"/", sub)
 					}
 					continue
@@ -699,7 +728,7 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 				if !strings.HasSuffix(e.Name(), ".json") {
 					continue
 				}
-				b, err := os.ReadFile(filepath.Join(*payloadDir, prefix, e.Name()))
+				b, err := os.ReadFile(filepath.Join(dir, prefix, e.Name()))
 				if err != nil {
 					continue
 				}
@@ -726,7 +755,7 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Dir {
-			if err := os.MkdirAll(filepath.Join(*payloadDir, name), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
 				writeJSON(w, map[string]any{"error": err.Error()})
 				return
 			}
@@ -740,8 +769,8 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": "payload is not valid JSON: " + err.Error()})
 			return
 		}
-		_ = os.MkdirAll(filepath.Dir(filepath.Join(*payloadDir, name)), 0o755)
-		if err := os.WriteFile(filepath.Join(*payloadDir, name+".json"), []byte(req.Body), 0o644); err != nil {
+		_ = os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755)
+		if err := os.WriteFile(filepath.Join(dir, name+".json"), []byte(req.Body), 0o644); err != nil {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
 		}
@@ -760,29 +789,29 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// A folder (collection) moves with everything in it.
-		if st, err := os.Stat(filepath.Join(*payloadDir, from)); err == nil && st.IsDir() {
+		if st, err := os.Stat(filepath.Join(dir, from)); err == nil && st.IsDir() {
 			if strings.HasPrefix(to+"/", from+"/") && from != to {
 				writeJSON(w, map[string]any{"error": "cannot move a folder into itself"})
 				return
 			}
-			if _, err := os.Stat(filepath.Join(*payloadDir, to)); err == nil && from != to {
+			if _, err := os.Stat(filepath.Join(dir, to)); err == nil && from != to {
 				writeJSON(w, map[string]any{"error": to + " already exists"})
 				return
 			}
-			_ = os.MkdirAll(filepath.Dir(filepath.Join(*payloadDir, to)), 0o755)
-			if err := os.Rename(filepath.Join(*payloadDir, from), filepath.Join(*payloadDir, to)); err != nil {
+			_ = os.MkdirAll(filepath.Dir(filepath.Join(dir, to)), 0o755)
+			if err := os.Rename(filepath.Join(dir, from), filepath.Join(dir, to)); err != nil {
 				writeJSON(w, map[string]any{"error": err.Error()})
 				return
 			}
 			writeJSON(w, map[string]any{"moved": to + "/"})
 			return
 		}
-		if _, err := os.Stat(filepath.Join(*payloadDir, to+".json")); err == nil && from != to {
+		if _, err := os.Stat(filepath.Join(dir, to+".json")); err == nil && from != to {
 			writeJSON(w, map[string]any{"error": to + ".json already exists"})
 			return
 		}
-		_ = os.MkdirAll(filepath.Dir(filepath.Join(*payloadDir, to)), 0o755)
-		if err := os.Rename(filepath.Join(*payloadDir, from+".json"), filepath.Join(*payloadDir, to+".json")); err != nil {
+		_ = os.MkdirAll(filepath.Dir(filepath.Join(dir, to)), 0o755)
+		if err := os.Rename(filepath.Join(dir, from+".json"), filepath.Join(dir, to+".json")); err != nil {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
 		}
@@ -796,15 +825,15 @@ func handlePayloads(w http.ResponseWriter, r *http.Request) {
 		}
 		// A folder (collection) is removed with everything in it; the
 		// browser confirms first. safeReqName keeps it inside payloadDir.
-		if st, err := os.Stat(filepath.Join(*payloadDir, name)); err == nil && st.IsDir() {
-			if err := os.RemoveAll(filepath.Join(*payloadDir, name)); err != nil {
+		if st, err := os.Stat(filepath.Join(dir, name)); err == nil && st.IsDir() {
+			if err := os.RemoveAll(filepath.Join(dir, name)); err != nil {
 				writeJSON(w, map[string]any{"error": err.Error()})
 				return
 			}
 			writeJSON(w, map[string]any{"deleted": name + "/"})
 			return
 		}
-		if err := os.Remove(filepath.Join(*payloadDir, name+".json")); err != nil {
+		if err := os.Remove(filepath.Join(dir, name+".json")); err != nil {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
 		}

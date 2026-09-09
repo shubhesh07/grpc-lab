@@ -172,6 +172,12 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   pane (the other takes the room), `☰` / `⌘B` hides the sidebar, folders in
   the tree fold, and the response header drags to resize the split. All of it
   is remembered.
+- **Workspaces** keep people apart on a shared instance: the dropdown at the
+  top of Collections picks `team` (the shared `payloads/` root, what everyone
+  sees) or a personal name (`payloads/_users/<name>/`, with its own
+  collections and history). `⧉` on a request or folder copies it to another
+  workspace, e.g. team → yours to tweak, yours → team to share. There is no
+  login: it stops collisions, not impersonation.
 - **Collections** are folders under `payloads/`, nested as deep as you like
   (`+ collection`, then hover a folder for `+ req`, `+ folder`, delete).
   **Save** (`⌘S`) writes the whole request — target, TLS, method, metadata

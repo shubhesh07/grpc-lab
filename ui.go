@@ -419,14 +419,22 @@ function showPath(segs){
 }
 
 // ---- invoke ----
+// {{name}} comes from the Variables box; Postman-style dynamic ones are built
+// in: {{$request_id}} / {{$guid}} -> a fresh UUID, {{$timestamp}} -> epoch
+// seconds. Anything still unresolved is reported by invoke() instead of being
+// sent as literal text.
+const uuid = () => crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === "x" ? r : r & 3 | 8).toString(16); });
 function substitute(txt){
   const vars = {};
   $("vars").value.split("\n").forEach(l => { const i = l.indexOf("="); if (i > 0) vars[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });
-  return txt.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (m, k) => k in vars ? vars[k] : m);
+  return txt.replace(/\{\{\s*(\$?[\w.-]+)\s*\}\}/g, (m, k) => k in vars ? vars[k] : k === "$request_id" || k === "$guid" ? uuid() : k === "$timestamp" ? String(Math.floor(Date.now() / 1000)) : k.startsWith("$") && ("$" + k.slice(1)) in vars ? vars[k] : k.slice(1) in vars ? vars[k.slice(1)] : m);
 }
+const unresolved = txt => [...new Set((txt.match(/\{\{\s*\$?[\w.-]+\s*\}\}/g) || []).map(s => s.replace(/[{}\s]/g, "")))];
 async function invoke(){
   if(!method){ setStatus("pick a method first", false); return; }
-  let objs; try { objs = parseMany(substitute($("body").value)); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
+  const sub = substitute($("body").value), miss = unresolved(sub);
+  if (miss.length){ setStatus("unset variable " + miss.join(", ") + " — add it under Metadata › Variables (name=value)", false); ptab("pmeta"); $("vars").focus(); return; }
+  let objs; try { objs = parseMany(sub); } catch(e){ setStatus("invalid JSON: " + e.message, false); return; }
   objs = objs.map(dropDisabled);
   const payload = objs.map(o => JSON.stringify(o, null, 2)).join("\n");
   const missing = findAny(objs).filter(f => f.missing);

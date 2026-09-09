@@ -161,7 +161,9 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
 - Metadata headers (`k: v` lines), bearer token, TLS (`-insecure`),
   `-emit-defaults` (on by default, so `false`/`0`/`""` fields are shown like
   Postman does), `-v` verbose mode, `{{var}}` substitution from a
-  variables box, `⌃⏎` to invoke.
+  variables box (`{{$request_id}}` / `{{$guid}}` give a fresh UUID per call,
+  `{{$timestamp}}` epoch seconds, `{{$name}}` falls back to `name`; an unset
+  variable blocks the call and points at the Variables box), `⌃⏎` to invoke.
 - **Postman-style layout**: a sidebar (Collections / Methods / History), request
   tabs across the top, a target + *Service / Method* dropdown bar, and the
   request stacked above its response. The request pane has **Body / Metadata /

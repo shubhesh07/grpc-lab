@@ -50,6 +50,13 @@ const ok = (cond, msg) => { if (!cond) throw new Error("FAIL [" + step + "] " + 
   await page.click("button.primary"); await waitStatus(/NOT_FOUND/);
   ok((await page.locator("#out").innerText()).includes("nope"), "gRPC error surfaced with code name");
 
+  step = "variables"; await page.fill("#body", '{"responseSize": {{nope}}}'); await page.click("button.primary"); await waitStatus(/unset variable nope/);
+  ok(await page.locator("#pmeta").isVisible(), "unset {{var}} blocks the call and opens Variables");
+  await page.fill("#vars", "nope=1\nsize=2"); await page.click("#ptabs [data-p=pbody]"); await page.fill("#body", '{"responseSize": {{size}}, "responseStatus": {"code": 0, "message": "{{$request_id}}"}}');
+  await page.click("button.primary"); await waitStatus(/ok/);
+  ok(await page.evaluate(async () => (await (await fetch("/api/history")).json()).history.some(h => /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/.test(h.payload))), "{{$request_id}} became a UUID in the sent body: " + JSON.stringify(await page.evaluate(async () => (await (await fetch("/api/history")).json()).history.slice(0, 3).map(h => h.payload.replace(/\s/g, "")))));
+  await page.click("#ptabs [data-p=pmeta]"); await page.fill("#vars", "");
+
   step = "metadata"; await page.click("#ptabs [data-p=pmeta]");
   await page.fill("#headers", "x-test: 1\nx-other: 2");
   ok((await page.locator("#ptabs [data-p=pmeta]").innerText()).includes("2"), "metadata badge counts headers");

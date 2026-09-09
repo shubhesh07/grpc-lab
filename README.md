@@ -175,10 +175,12 @@ protobuf dependencies — stdlib Go and one HTML file, no build step.
   **Save** (`⌘S`) writes the whole request — target, TLS, method, metadata
   headers and body — back to the file the tab was opened from
   (`{"grpc-lab": {addr, tls, method, headers}, "body": {...}}`); **Save as…**
-  asks for `collection/folder/name`. The token is never written (these files
-  get committed). Older body-only files still load. A saved request opens in
-  its own tab, which shows a `●` when it has unsaved changes. Rename or move
-  by saving under the new name and deleting the old one.
+  opens a dialog with a folder picker (existing folders suggested, typing a
+  new path creates it) and a name. `⇢` on a request moves or renames it, open
+  tabs follow. The token is never written (these files get committed). Older
+  body-only files still load. A saved request opens in its own tab, which
+  shows a `●` when it has unsaved changes. Each tab has its own target, method,
+  body and response.
   Call history (`payloads/.history.jsonl`, last 100) reloads a request in one
   click, and its `➕` saves that call as a request. addr/token/headers/body per
   method persist in `localStorage`.
